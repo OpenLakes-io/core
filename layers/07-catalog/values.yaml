@@ -21,7 +21,7 @@ openmetadata:
   database:
     host: postgres
     port: 5432
-    databaseName: openmetadata_db
+    databaseName: openmetadata
     username: openlakes
     password: openlakes123
     driverClass: org.postgresql.Driver
@@ -94,7 +94,7 @@ openmetadata:
 
   # Probes Configuration
   livenessProbe:
-    initialDelaySeconds: 120
+    initialDelaySeconds: 30
     periodSeconds: 30
     failureThreshold: 5
 

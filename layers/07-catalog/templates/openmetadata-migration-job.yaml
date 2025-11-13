@@ -1,25 +1,27 @@
 {{- if .Values.openmetadata.enabled }}
 ---
-apiVersion: apps/v1
-kind: Deployment
+apiVersion: batch/v1
+kind: Job
 metadata:
-  name: {{ include "openlakes-catalog.fullname" . }}-openmetadata
+  name: {{ include "openlakes-catalog.fullname" . }}-openmetadata-migrate
   namespace: {{ .Values.global.namespace }}
   labels:
     app: openmetadata
-    component: server
+    component: migration
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
 spec:
-  replicas: 1
-  selector:
-    matchLabels:
-      app: openmetadata
-      component: server
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 3
   template:
     metadata:
       labels:
         app: openmetadata
-        component: server
+        component: migration
     spec:
+      restartPolicy: OnFailure
       initContainers:
       # Wait for PostgreSQL to be ready
       - name: wait-for-db
@@ -53,16 +55,15 @@ spec:
       {{- end }}
 
       containers:
-      - name: openmetadata
+      - name: run-migration
         image: {{ .Values.openmetadata.image.repository }}:{{ .Values.openmetadata.image.tag }}
         imagePullPolicy: {{ .Values.openmetadata.image.pullPolicy }}
-        ports:
-          - name: http
-            containerPort: 8585
-            protocol: TCP
-          - name: http-admin
-            containerPort: 8586
-            protocol: TCP
+        command:
+          - "/bin/bash"
+          - "-c"
+          - |
+            echo "Running OpenMetadata database migrations..."
+            ./bootstrap/openmetadata-ops.sh migrate
         env:
           # Database Configuration
           - name: DB_DRIVER_CLASS
@@ -138,31 +139,4 @@ spec:
           # Logging
           - name: LOG_LEVEL
             value: {{ .Values.openmetadata.logLevel | quote }}
-
-        livenessProbe:
-          httpGet:
-            path: /healthcheck
-            port: http-admin
-          initialDelaySeconds: {{ .Values.openmetadata.livenessProbe.initialDelaySeconds }}
-          periodSeconds: {{ .Values.openmetadata.livenessProbe.periodSeconds }}
-          failureThreshold: {{ .Values.openmetadata.livenessProbe.failureThreshold }}
-
-        readinessProbe:
-          httpGet:
-            path: /healthcheck
-            port: http-admin
-          initialDelaySeconds: {{ .Values.openmetadata.readinessProbe.initialDelaySeconds }}
-          periodSeconds: {{ .Values.openmetadata.readinessProbe.periodSeconds }}
-          failureThreshold: {{ .Values.openmetadata.readinessProbe.failureThreshold }}
-
-        startupProbe:
-          httpGet:
-            path: /healthcheck
-            port: http-admin
-          periodSeconds: {{ .Values.openmetadata.startupProbe.periodSeconds }}
-          failureThreshold: {{ .Values.openmetadata.startupProbe.failureThreshold }}
-          successThreshold: {{ .Values.openmetadata.startupProbe.successThreshold }}
-
-        resources:
-          {{- toYaml .Values.openmetadata.resources | nindent 10 }}
 {{- end }}
