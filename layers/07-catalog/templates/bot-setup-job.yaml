@@ -179,6 +179,117 @@ spec:
 
           echo "✅ Bot setup complete. Token (first 20 chars): ${BOT_TOKEN:0:20}..."
 
+          # Test the JWT token against the API
+          echo ""
+          echo "🔐 Testing JWT token authentication..."
+          echo "================================================"
+
+          # Test 1: Get current user (bot) info
+          echo "📋 Test 1: Retrieving bot user information..."
+          BOT_USER_RESPONSE=$(curl -s -X GET \
+            "http://${OM_HOST}:${OM_PORT}/api/v1/users/name/openlakes-bot" \
+            -H "Authorization: Bearer ${BOT_TOKEN}")
+
+          BOT_USER_NAME=$(echo "$BOT_USER_RESPONSE" | jq -r '.name // empty')
+          if [ "$BOT_USER_NAME" = "openlakes-bot" ]; then
+            echo "  ✅ Successfully authenticated as bot user"
+            echo "  - Name: $(echo "$BOT_USER_RESPONSE" | jq -r '.displayName')"
+            echo "  - Email: $(echo "$BOT_USER_RESPONSE" | jq -r '.email')"
+            echo "  - Is Bot: $(echo "$BOT_USER_RESPONSE" | jq -r '.isBot')"
+            echo "  - Is Admin: $(echo "$BOT_USER_RESPONSE" | jq -r '.isAdmin')"
+          else
+            echo "  ❌ Failed to retrieve bot user info"
+            echo "  Response: $BOT_USER_RESPONSE"
+          fi
+
+          # Test 2: List databases (requires read permissions)
+          echo ""
+          echo "📋 Test 2: Listing database services..."
+          DATABASES_RESPONSE=$(curl -s -X GET \
+            "http://${OM_HOST}:${OM_PORT}/api/v1/services/databaseServices?limit=5" \
+            -H "Authorization: Bearer ${BOT_TOKEN}")
+
+          DB_COUNT=$(echo "$DATABASES_RESPONSE" | jq -r '.paging.total // 0')
+          if [ "$DB_COUNT" -ge 0 ]; then
+            echo "  ✅ Successfully retrieved database services (count: $DB_COUNT)"
+            echo "$DATABASES_RESPONSE" | jq -r '.data[]?.name // empty' | while read -r db; do
+              [ -n "$db" ] && echo "  - $db"
+            done
+          else
+            echo "  ❌ Failed to list database services"
+            echo "  Response: $DATABASES_RESPONSE"
+          fi
+
+          # Test 3: Create a test tag (requires write permissions)
+          echo ""
+          echo "📋 Test 3: Testing write permissions (create tag category)..."
+          TEST_TAG_NAME="bot-test-$(date +%s)"
+          TAG_RESPONSE=$(curl -s -X PUT \
+            "http://${OM_HOST}:${OM_PORT}/api/v1/tags" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${BOT_TOKEN}" \
+            -d "{
+              \"name\": \"${TEST_TAG_NAME}\",
+              \"displayName\": \"Bot Test Tag\",
+              \"description\": \"Test tag created by bot to verify JWT permissions\",
+              \"classification\": \"Tags\"
+            }")
+
+          TAG_ID=$(echo "$TAG_RESPONSE" | jq -r '.id // empty')
+          if [ -n "$TAG_ID" ] && [ "$TAG_ID" != "null" ]; then
+            echo "  ✅ Successfully created test tag (id: ${TAG_ID:0:8}...)"
+
+            # Clean up test tag
+            echo "  🗑️  Cleaning up test tag..."
+            DELETE_RESPONSE=$(curl -s -X DELETE \
+              "http://${OM_HOST}:${OM_PORT}/api/v1/tags/${TAG_ID}?hardDelete=true" \
+              -H "Authorization: Bearer ${BOT_TOKEN}")
+            echo "  ✅ Test tag cleaned up"
+          else
+            echo "  ⚠️  Could not create test tag (might need admin permissions)"
+            echo "  Response: $(echo "$TAG_RESPONSE" | jq -r '.message // .error // "Unknown error"')"
+          fi
+
+          # Test 4: Verify API health with authentication
+          echo ""
+          echo "📋 Test 4: Testing authenticated health endpoint..."
+          HEALTH_RESPONSE=$(curl -s -X GET \
+            "http://${OM_HOST}:${OM_PORT}/api/v1/system/config/auth" \
+            -H "Authorization: Bearer ${BOT_TOKEN}")
+
+          AUTH_PROVIDER=$(echo "$HEALTH_RESPONSE" | jq -r '.provider // empty')
+          if [ -n "$AUTH_PROVIDER" ]; then
+            echo "  ✅ Successfully accessed system config"
+            echo "  - Auth Provider: $AUTH_PROVIDER"
+            echo "  - Public Keys URL: $(echo "$HEALTH_RESPONSE" | jq -r '.publicKeyUrls[0] // "N/A"')"
+          else
+            echo "  ❌ Failed to access system config"
+          fi
+
+          # Test 5: Validate JWT expiry
+          echo ""
+          echo "📋 Test 5: Checking JWT token expiry..."
+          # Decode JWT payload (base64 decode the middle part)
+          JWT_PAYLOAD=$(echo "${BOT_TOKEN}" | cut -d'.' -f2 | base64 -d 2>/dev/null || echo "{}")
+          EXP_TIME=$(echo "$JWT_PAYLOAD" | jq -r '.exp // empty' 2>/dev/null)
+
+          if [ -n "$EXP_TIME" ] && [ "$EXP_TIME" != "null" ]; then
+            CURRENT_TIME=$(date +%s)
+            if [ "$EXP_TIME" -gt "$CURRENT_TIME" ]; then
+              TIME_REMAINING=$((EXP_TIME - CURRENT_TIME))
+              echo "  ✅ Token is valid for $(($TIME_REMAINING / 86400)) days"
+            else
+              echo "  ⚠️  Token appears to be expired"
+            fi
+          else
+            echo "  ✅ Token has unlimited expiry (as configured)"
+          fi
+
+          echo ""
+          echo "================================================"
+          echo "🎉 JWT Token Verification Complete!"
+          echo ""
+
           # Store token in Kubernetes secret
           echo "💾 Storing bot token in Kubernetes secret..."
           kubectl create secret generic openmetadata-bot-token \

@@ -23,8 +23,8 @@ postgresql:
   persistence:
     size: 10Gi
   resources:
-    limits:
-      memory: 1Gi
+#    limits:
+#      memory: 1Gi
 
 redis:
   enabled: true
@@ -35,8 +35,8 @@ redis:
   persistence:
     size: 5Gi
   resources:
-    limits:
-      memory: 512Mi
+#    limits:
+#      memory: 512Mi
 
 minio:
   enabled: true
@@ -53,8 +53,8 @@ minio:
     type: NodePort
     nodePort: 30900
   resources:
-    limits:
-      memory: 1Gi
+#    limits:
+#      memory: 1Gi
 
 kafka:
   enabled: true
@@ -74,8 +74,8 @@ kafka:
     type: NodePort
     nodePort: 30092
   resources:
-    limits:
-      memory: 2Gi
+#    limits:
+#      memory: 2Gi
 
 opensearch:
   enabled: true
@@ -88,10 +88,9 @@ opensearch:
     disabled: true
   storageClass: local-path
   storageSize: 10Gi
-  resources:
-    limits:
-      cpu: 1000m
-      memory: 2Gi
-    javaOpts:
-      xms: 512m
-      xmx: 512m
+#  resources:
+#      cpu: 1000m
+#      memory: 2Gi
+#    javaOpts:
+#      xms: 512m
+#      xmx: 512m
