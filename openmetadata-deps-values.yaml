@@ -1,0 +1,55 @@
+# OpenMetadata Dependencies Values
+# Using existing PostgreSQL and MinIO, deploying only Elasticsearch
+
+# Disable MySQL deployment (using PostgreSQL instead)
+mysql:
+  enabled: false
+
+# Deploy Elasticsearch for search
+elasticsearch:
+  enabled: true
+  replicas: 1
+  minimumMasterNodes: 1
+  resources:
+    requests:
+      cpu: "256m"
+      memory: "512Mi"
+    limits:
+      cpu: "1000m"
+      memory: "1536Mi"
+  persistence:
+    enabled: true
+    size: "30Gi"
+
+# Airflow configuration
+airflow:
+  enabled: true
+  airflow:
+    extraEnvVars:
+      - name: AIRFLOW__OPENMETADATA_AIRFLOW_APIS__DAG_GENERATED_CONFIGS
+        value: "/opt/airflow/dags"
+  postgresql:
+    enabled: false  # Use external PostgreSQL
+  externalDatabase:
+    type: postgres
+    host: openlakes-postgres.openlakes.svc.cluster.local
+    port: 5432
+    database: airflow
+    user: airflow
+    password: airflow
+  dags:
+    persistence:
+      enabled: true
+      size: 1Gi
+      storageClass: local-path
+  logs:
+    persistence:
+      enabled: true
+      size: 10Gi
+      storageClass: local-path
+  webserverConfig:
+    webserverConfig: |
+      from airflow import configuration as conf
+      from flask_appbuilder.security.manager import AUTH_DB
+      
+      AUTH_TYPE = AUTH_DB

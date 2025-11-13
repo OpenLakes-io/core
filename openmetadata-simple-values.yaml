@@ -1,0 +1,68 @@
+# OpenMetadata Simple Values
+# Minimal deployment using existing infrastructure
+
+global:
+  airflow:
+    enabled: false  # Use existing Airflow
+  
+openmetadata:
+  config:
+    database:
+      host: openlakes-postgres.openlakes.svc.cluster.local
+      port: 5432
+      driverClass: org.postgresql.Driver
+      dbScheme: postgresql
+      databaseName: openmetadata_db
+      auth:
+        username: openmetadata_user
+        password: openmetadata_pass
+
+    elasticsearch:
+      enabled: false  # We'll use OpenSearch instead
+      searchType: opensearch
+      host: opensearch.openlakes.svc.cluster.local
+      port: 9200
+      scheme: http
+      trustStore:
+        enabled: false
+
+    pipelineServiceClientConfig:
+      enabled: false  # Disable for now, we'll configure later
+      
+    authentication:
+      provider: basic
+      publicKeys:
+        - "http://openmetadata:8585/api/v1/system/config/jwks"
+      enableSelfSignup: true
+      jwtPrincipalClaims:
+        - "email"
+        - "preferred_username"
+        - "sub"
+
+    authorizer:
+      className: "org.openmetadata.service.security.DefaultAuthorizer"
+      containerRequestFilter: "org.openmetadata.service.security.JwtFilter"
+      initialAdmins:
+        - "admin"
+      principalDomain: "open-metadata.org"
+
+    secretsManager:
+      provider: noop
+
+  image:
+    repository: docker.getcollate.io/openmetadata/server
+    tag: 1.10.6
+    pullPolicy: IfNotPresent
+
+  service:
+    type: NodePort
+    port: 8585
+    targetPort: 8585
+
+  resources:
+    requests:
+      cpu: "500m"
+      memory: "1Gi"
+    limits:
+      cpu: "2"
+      memory: "2Gi"

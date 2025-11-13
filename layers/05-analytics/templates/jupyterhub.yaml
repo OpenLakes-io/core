@@ -1,0 +1,98 @@
+{{- if .Values.jupyterhub.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.jupyterhub.fullnameOverride }}-data
+  namespace: {{ .Values.global.namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.global.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.jupyterhub.persistence.size }}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.jupyterhub.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: jupyterhub
+    component: analytics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: jupyterhub
+  template:
+    metadata:
+      labels:
+        app: jupyterhub
+        component: analytics
+    spec:
+      containers:
+      - name: jupyterhub
+        image: {{ .Values.jupyterhub.image.repository }}:{{ .Values.jupyterhub.image.tag }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          # Create simple jupyterhub config
+          cat > /srv/jupyterhub/jupyterhub_config.py <<EOF
+          c.JupyterHub.authenticator_class = 'jupyterhub.auth.DummyAuthenticator'
+          c.DummyAuthenticator.password = "openlakes"
+          c.Authenticator.admin_users = {{ .Values.jupyterhub.auth.adminUsers | toJson }}
+          c.Spawner.default_url = '/lab'
+          c.Spawner.cmd = ['jupyter-labhub']
+          EOF
+
+          # Start JupyterHub
+          jupyterhub --config /srv/jupyterhub/jupyterhub_config.py
+        ports:
+        - containerPort: 8000
+          name: http
+        volumeMounts:
+        - name: data
+          mountPath: /srv/jupyterhub
+        resources:
+          {{- toYaml .Values.jupyterhub.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /hub/health
+            port: 8000
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /hub/health
+            port: 8000
+          initialDelaySeconds: 30
+          periodSeconds: 10
+      volumes:
+      - name: data
+        persistentVolumeClaim:
+          claimName: {{ .Values.jupyterhub.fullnameOverride }}-data
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.jupyterhub.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: jupyterhub
+spec:
+  type: {{ .Values.global.networking.type | default "ClusterIP" }}
+  selector:
+    app: jupyterhub
+  ports:
+  - name: http
+    port: 8000
+    targetPort: 8000
+    {{- if eq (.Values.global.networking.type | default "ClusterIP") "NodePort" }}
+    nodePort: {{ .Values.jupyterhub.service.nodePort }}
+    {{- end }}
+{{- end }}

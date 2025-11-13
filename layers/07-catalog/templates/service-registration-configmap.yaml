@@ -1,0 +1,270 @@
+{{- if and .Values.openmetadata.enabled .Values.openmetadata.automation.enabled }}
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openmetadata-service-registration
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata
+    component: service-registration
+    layer: catalog
+data:
+  register-services.sh: |
+    #!/bin/bash
+    set -e
+
+    # Configuration from environment
+    OM_HOST="${OPENMETADATA_HOST:-openmetadata}"
+    OM_PORT="${OPENMETADATA_PORT:-8585}"
+    ADMIN_USER="${ADMIN_USER:-admin}"
+    ADMIN_PASS="${ADMIN_PASSWORD:-admin}"
+    NAMESPACE="{{ .Values.global.namespace }}"
+
+    # Colors for output
+    GREEN='\033[0;32m'
+    YELLOW='\033[1;33m'
+    RED='\033[0;31m'
+    NC='\033[0m'
+
+    echo "========================================="
+    echo "OpenLakes Service Registration"
+    echo "========================================="
+    echo ""
+
+    # Functions
+    print_success() { echo -e "${GREEN}✓${NC} $1"; }
+    print_warning() { echo -e "${YELLOW}⚠${NC} $1"; }
+    print_error() { echo -e "${RED}✗${NC} $1"; }
+    print_info() { echo -e "ℹ️  $1"; }
+
+    # Wait for OpenMetadata
+    print_info "Waiting for OpenMetadata to be ready..."
+    for i in $(seq 1 60); do
+      if curl -f -s "http://${OM_HOST}:${OM_PORT}/api/v1/system/version" > /dev/null 2>&1; then
+        print_success "OpenMetadata is ready!"
+        break
+      fi
+      if [ $i -eq 60 ]; then
+        print_error "OpenMetadata failed to become ready"
+        exit 1
+      fi
+      echo "  Attempt $i/60: Waiting..."
+      sleep 5
+    done
+
+    # Authenticate
+    print_info "Authenticating with OpenMetadata..."
+    ADMIN_PASS_B64=$(echo -n "${ADMIN_PASS}" | base64)
+    TOKEN_RESPONSE=$(curl -s -X POST \
+      "http://${OM_HOST}:${OM_PORT}/api/v1/users/login" \
+      -H "Content-Type: application/json" \
+      -d "{
+        \"email\": \"${ADMIN_USER}@open-metadata.org\",
+        \"password\": \"${ADMIN_PASS_B64}\"
+      }")
+
+    ADMIN_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken // empty')
+
+    if [ -z "$ADMIN_TOKEN" ] || [ "$ADMIN_TOKEN" = "null" ]; then
+      print_error "Failed to authenticate with OpenMetadata"
+      exit 1
+    fi
+
+    print_success "Authentication successful"
+    echo ""
+
+    # Function to register service
+    register_service() {
+      local NAME=$1
+      local TYPE=$2
+      local ENDPOINT=$3
+      local CONFIG=$4
+
+      print_info "Registering ${NAME} (${TYPE})..."
+
+      # Check if exists
+      CHECK=$(curl -s -o /dev/null -w "%{http_code}" \
+        -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+        "http://${OM_HOST}:${OM_PORT}/api/v1/services/${ENDPOINT}/name/${NAME}")
+
+      if [ "$CHECK" = "200" ]; then
+        METHOD="PUT"
+        print_warning "${NAME} already exists, updating..."
+      else
+        METHOD="POST"
+      fi
+
+      # Register/update service
+      RESPONSE=$(curl -s -w "\n%{http_code}" \
+        -X ${METHOD} \
+        -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "${CONFIG}" \
+        "http://${OM_HOST}:${OM_PORT}/api/v1/services/${ENDPOINT}")
+
+      HTTP_CODE=$(echo "$RESPONSE" | tail -1)
+      BODY=$(echo "$RESPONSE" | head -n -1)
+
+      if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+        print_success "${NAME} registered successfully"
+      else
+        print_error "Failed to register ${NAME} (HTTP ${HTTP_CODE})"
+        echo "  Response: $(echo $BODY | jq -r .message 2>/dev/null || echo $BODY)" | head -5
+      fi
+      echo ""
+    }
+
+    # Register all services based on what's enabled in the cluster
+    echo "=== Database Services ==="
+
+    {{- if .Values.services.postgresql.enabled }}
+    register_service "{{ .Values.services.postgresql.name }}" "Postgres" "databaseServices" '{
+      "name": "{{ .Values.services.postgresql.name }}",
+      "serviceType": "Postgres",
+      "description": "{{ .Values.services.postgresql.description }}",
+      "connection": {
+        "config": {
+          "type": "Postgres",
+          "username": "{{ .Values.services.postgresql.username }}",
+          "authType": {
+            "password": "{{ .Values.services.postgresql.password }}"
+          },
+          "hostPort": "{{ .Values.services.postgresql.host }}:{{ .Values.services.postgresql.port }}",
+          "database": "{{ .Values.services.postgresql.database }}"
+        }
+      }
+    }'
+    {{- end }}
+
+    {{- if .Values.services.trino.enabled }}
+    register_service "{{ .Values.services.trino.name }}" "Trino" "databaseServices" '{
+      "name": "{{ .Values.services.trino.name }}",
+      "serviceType": "Trino",
+      "description": "{{ .Values.services.trino.description }}",
+      "connection": {
+        "config": {
+          "type": "Trino",
+          "username": "{{ .Values.services.trino.username }}",
+          "hostPort": "{{ .Values.services.trino.host }}:{{ .Values.services.trino.port }}",
+          "catalog": "{{ .Values.services.trino.catalog }}"
+        }
+      }
+    }'
+    {{- end }}
+
+    {{- if .Values.services.starrocks.enabled }}
+    register_service "{{ .Values.services.starrocks.name }}" "Mysql" "databaseServices" '{
+      "name": "{{ .Values.services.starrocks.name }}",
+      "serviceType": "Mysql",
+      "description": "{{ .Values.services.starrocks.description }}",
+      "connection": {
+        "config": {
+          "type": "Mysql",
+          "scheme": "mysql+pymysql",
+          "username": "{{ .Values.services.starrocks.username }}",
+          "hostPort": "{{ .Values.services.starrocks.host }}:{{ .Values.services.starrocks.port }}",
+          "databaseSchema": "{{ .Values.services.starrocks.database }}"
+        }
+      }
+    }'
+    {{- end }}
+
+    echo "=== Storage Services ==="
+
+    {{- if .Values.services.minio.enabled }}
+    register_service "{{ .Values.services.minio.name }}" "S3" "storageServices" '{
+      "name": "{{ .Values.services.minio.name }}",
+      "serviceType": "S3",
+      "description": "{{ .Values.services.minio.description }}",
+      "connection": {
+        "config": {
+          "type": "S3",
+          "awsConfig": {
+            "awsAccessKeyId": "{{ .Values.services.minio.accessKey }}",
+            "awsSecretAccessKey": "{{ .Values.services.minio.secretKey }}",
+            "awsRegion": "{{ .Values.services.minio.region }}",
+            "endPointURL": "{{ .Values.services.minio.endpoint }}"
+          }
+        }
+      }
+    }'
+    {{- end }}
+
+    echo "=== Messaging Services ==="
+
+    {{- if .Values.services.kafka.enabled }}
+    register_service "{{ .Values.services.kafka.name }}" "Kafka" "messagingServices" '{
+      "name": "{{ .Values.services.kafka.name }}",
+      "serviceType": "Kafka",
+      "description": "{{ .Values.services.kafka.description }}",
+      "connection": {
+        "config": {
+          "type": "Kafka",
+          "bootstrapServers": "{{ .Values.services.kafka.bootstrapServers }}"
+        }
+      }
+    }'
+    {{- end }}
+
+    echo "=== Search Services ==="
+
+    {{- if .Values.services.opensearch.enabled }}
+    register_service "{{ .Values.services.opensearch.name }}" "ElasticSearch" "searchServices" '{
+      "name": "{{ .Values.services.opensearch.name }}",
+      "serviceType": "ElasticSearch",
+      "description": "{{ .Values.services.opensearch.description }}",
+      "connection": {
+        "config": {
+          "type": "ElasticSearch",
+          "hostPort": "{{ .Values.services.opensearch.endpoint }}"
+        }
+      }
+    }'
+    {{- end }}
+
+    {{- if .Values.services.airflow.enabled }}
+    echo "=== Pipeline Services ==="
+
+    register_service "{{ .Values.services.airflow.name }}" "Airflow" "pipelineServices" '{
+      "name": "{{ .Values.services.airflow.name }}",
+      "serviceType": "Airflow",
+      "description": "{{ .Values.services.airflow.description }}",
+      "connection": {
+        "config": {
+          "type": "Airflow",
+          "hostPort": "{{ .Values.services.airflow.endpoint }}",
+          "numberOfStatus": 10,
+          "connection": {
+            "type": "Backend"
+          }
+        }
+      }
+    }'
+    {{- end }}
+
+    {{- if .Values.services.superset.enabled }}
+    echo "=== Dashboard Services ==="
+
+    register_service "{{ .Values.services.superset.name }}" "Superset" "dashboardServices" '{
+      "name": "{{ .Values.services.superset.name }}",
+      "serviceType": "Superset",
+      "description": "{{ .Values.services.superset.description }}",
+      "connection": {
+        "config": {
+          "type": "Superset",
+          "hostPort": "{{ .Values.services.superset.endpoint }}",
+          "connection": {
+            "provider": "db",
+            "username": "{{ .Values.services.superset.username }}",
+            "password": "{{ .Values.services.superset.password }}"
+          }
+        }
+      }
+    }'
+    {{- end }}
+
+    echo ""
+    echo "========================================="
+    print_success "Service Registration Complete!"
+    echo "========================================="
+{{- end }}

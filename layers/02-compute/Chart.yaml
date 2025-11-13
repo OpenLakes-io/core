@@ -1,0 +1,6 @@
+apiVersion: v2
+name: openlakes-compute
+version: 1.0.0
+description: OpenLakes compute layer - query engines (Trino, StarRocks)
+type: application
+appVersion: "1.0.0"

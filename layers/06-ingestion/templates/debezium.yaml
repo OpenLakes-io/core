@@ -1,0 +1,100 @@
+{{- if .Values.debezium.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.debezium.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: debezium
+    component: ingestion
+spec:
+  replicas: {{ .Values.debezium.replicas }}
+  selector:
+    matchLabels:
+      app: debezium
+  template:
+    metadata:
+      labels:
+        app: debezium
+        component: ingestion
+    spec:
+      initContainers:
+      - name: wait-for-kafka
+        image: busybox:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          until nc -z {{ .Values.debezium.kafka.host }} {{ .Values.debezium.kafka.port }}; do
+            echo "Waiting for Kafka at {{ .Values.debezium.kafka.host }}:{{ .Values.debezium.kafka.port }}..."
+            sleep 5
+          done
+          echo "Kafka is available!"
+      containers:
+      - name: debezium-connect
+        image: {{ .Values.debezium.image.repository }}:{{ .Values.debezium.image.tag }}
+        ports:
+        - containerPort: 8083
+          name: http
+        - containerPort: 5005
+          name: jmx
+        env:
+        # Kafka Connect Configuration
+        - name: BOOTSTRAP_SERVERS
+          value: "{{ .Values.debezium.kafka.host }}:{{ .Values.debezium.kafka.port }}"
+        - name: GROUP_ID
+          value: "{{ .Values.debezium.groupId }}"
+        - name: CONFIG_STORAGE_TOPIC
+          value: "debezium_connect_configs"
+        - name: OFFSET_STORAGE_TOPIC
+          value: "debezium_connect_offsets"
+        - name: STATUS_STORAGE_TOPIC
+          value: "debezium_connect_statuses"
+        - name: CONNECT_KEY_CONVERTER
+          value: "org.apache.kafka.connect.json.JsonConverter"
+        - name: CONNECT_VALUE_CONVERTER
+          value: "org.apache.kafka.connect.json.JsonConverter"
+        - name: CONNECT_REST_ADVERTISED_HOST_NAME
+          value: "{{ .Values.debezium.fullnameOverride }}"
+        # Debezium Configuration
+        - name: ENABLE_DEBEZIUM_SCRIPTING
+          value: "true"
+        resources:
+          {{- toYaml .Values.debezium.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 8083
+          initialDelaySeconds: 60
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 8083
+          initialDelaySeconds: 30
+          periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.debezium.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: debezium
+spec:
+  type: {{ .Values.global.networking.type | default "ClusterIP" }}
+  selector:
+    app: debezium
+  ports:
+  - name: http
+    port: 8083
+    targetPort: 8083
+    {{- if eq (.Values.global.networking.type | default "ClusterIP") "NodePort" }}
+    nodePort: {{ .Values.debezium.service.nodePort }}
+    {{- end }}
+  - name: jmx
+    port: 5005
+    targetPort: 5005
+{{- end }}

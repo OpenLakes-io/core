@@ -1,0 +1,53 @@
+global:
+  networking:
+    type: NodePort
+  storageClass: local-path
+  namespace: openlakes
+
+airbyte:
+  # DISABLED: Airbyte requires the official Helm chart (not a simple single-container deployment)
+  #
+  # To install Airbyte, use the official Helm chart:
+  #   helm repo add airbyte https://airbytehq.github.io/helm-charts
+  #   helm install airbyte airbyte/airbyte --namespace openlakes
+  #
+  # See: https://github.com/airbytehq/helm-charts
+  enabled: false
+  fullnameOverride: airbyte
+  image:
+    repository: airbyte/server
+    tag: "2.0.1"
+  service:
+    nodePort: 30800
+  database:
+    host: openlakes-postgres
+    port: 5432
+    name: airbyte
+    user: openlakes
+    password: openlakes123
+  resources:
+    requests:
+      cpu: 250m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+debezium:
+  enabled: true  # Debezium Kafka Connect for Change Data Capture (CDC)
+  fullnameOverride: debezium
+  image:
+    repository: quay.io/debezium/connect
+    tag: "3.3"
+  replicas: 1
+  groupId: "debezium-cluster"
+  kafka:
+    host: openlakes-kafka
+    port: 9092
+  service:
+    nodePort: 30810
+  resources:
+    requests:
+      cpu: 250m
+      memory: 768Mi
+    limits:
+      memory: 2Gi

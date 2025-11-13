@@ -1,0 +1,70 @@
+{{- if .Values.flink.enabled }}
+# Flink JobManager and TaskManager deployments
+# Requires Kafka from Layer 1 to be operational
+# Enable by setting flink.enabled=true in values.yaml
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.flink.fullnameOverride }}-config
+  namespace: {{ .Values.global.namespace }}
+data:
+  flink-conf.yaml: |
+    jobmanager.rpc.address: {{ .Values.flink.fullnameOverride }}-jobmanager
+    taskmanager.numberOfTaskSlots: 2
+    parallelism.default: 2
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.flink.fullnameOverride }}-jobmanager
+  namespace: {{ .Values.global.namespace }}
+spec:
+  replicas: {{ .Values.flink.jobmanager.replicas }}
+  selector:
+    matchLabels:
+      app: flink
+      component: jobmanager
+  template:
+    metadata:
+      labels:
+        app: flink
+        component: jobmanager
+    spec:
+      containers:
+      - name: jobmanager
+        image: {{ .Values.flink.image.repository }}:{{ .Values.flink.image.tag }}
+        args: ["jobmanager"]
+        ports:
+        - containerPort: 6123
+          name: rpc
+        - containerPort: 6124
+          name: blob
+        - containerPort: 8081
+          name: ui
+        resources:
+          {{- toYaml .Values.flink.jobmanager.resources | nindent 10 }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.flink.fullnameOverride }}-jobmanager
+  namespace: {{ .Values.global.namespace }}
+spec:
+  type: {{ .Values.global.networking.type | default "ClusterIP" }}
+  selector:
+    app: flink
+    component: jobmanager
+  ports:
+  - name: rpc
+    port: 6123
+  - name: blob
+    port: 6124
+  - name: ui
+    port: 8081
+    {{- if eq (.Values.global.networking.type | default "ClusterIP") "NodePort" }}
+    nodePort: {{ .Values.flink.jobmanager.nodePort }}
+    {{- end }}
+{{- end }}

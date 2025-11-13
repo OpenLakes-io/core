@@ -1,0 +1,112 @@
+global:
+  networking:
+    type: NodePort
+  storageClass: local-path
+  namespace: openlakes
+
+postgresql:
+  enabled: true
+  fullnameOverride: postgres
+  image:
+    repository: postgres
+    tag: "15"
+  auth:
+    database: openlakes
+    username: openlakes
+    password: openlakes123
+    postgresPassword: postgres123
+  # Databases to create automatically
+  databases:
+    - airflow
+    - openmetadata
+    - superset
+  persistence:
+    size: 10Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+redis:
+  enabled: true
+  fullnameOverride: redis
+  image:
+    repository: redis
+    tag: "7-alpine"
+  persistence:
+    size: 5Gi
+  resources:
+    requests:
+      cpu: 250m
+      memory: 256Mi
+    limits:
+      memory: 512Mi
+
+minio:
+  enabled: true
+  fullnameOverride: minio
+  image:
+    repository: minio/minio
+    tag: "latest"
+  auth:
+    rootUser: admin
+    rootPassword: admin123
+  persistence:
+    size: 20Gi
+  service:
+    type: NodePort
+    nodePort: 30900
+  resources:
+    requests:
+      cpu: 500m
+      memory: 512Mi
+    limits:
+      memory: 1Gi
+
+kafka:
+  enabled: true
+  fullnameOverride: kafka
+  image:
+    repository: apache/kafka
+    tag: "4.0.1"
+  kraft:
+    enabled: true
+  controller:
+    replicaCount: 1
+  broker:
+    replicaCount: 1
+  persistence:
+    size: 10Gi
+  service:
+    type: NodePort
+    nodePort: 30092
+  resources:
+    requests:
+      cpu: 1
+      memory: 1Gi
+    limits:
+      memory: 2Gi
+
+opensearch:
+  enabled: true
+  image: opensearchproject/opensearch
+  tag: "2.11.0"
+  replicas: 1
+  clusterName: opensearch-cluster
+  discoveryType: single-node
+  security:
+    disabled: true
+  storageClass: local-path
+  storageSize: 10Gi
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      cpu: 1000m
+      memory: 2Gi
+    javaOpts:
+      xms: 512m
+      xmx: 512m

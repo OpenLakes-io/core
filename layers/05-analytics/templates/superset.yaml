@@ -1,0 +1,87 @@
+{{- if .Values.superset.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.superset.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: superset
+    component: analytics
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: superset
+  template:
+    metadata:
+      labels:
+        app: superset
+        component: analytics
+    spec:
+      containers:
+      - name: superset
+        image: {{ .Values.superset.image.repository }}:{{ .Values.superset.image.tag }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          # Initialize database
+          superset db upgrade
+
+          # Create admin user
+          superset fab create-admin \
+            --username {{ .Values.superset.auth.adminUser }} \
+            --firstname Admin \
+            --lastname User \
+            --email {{ .Values.superset.auth.adminEmail }} \
+            --password {{ .Values.superset.auth.adminPassword }} || true
+
+          # Initialize Superset
+          superset init
+
+          # Start server
+          superset run -h 0.0.0.0 -p 8088
+        ports:
+        - containerPort: 8088
+          name: http
+        env:
+        - name: SUPERSET_SECRET_KEY
+          value: "openlakes-superset-secret-key-change-in-production"
+        - name: SQLALCHEMY_DATABASE_URI
+          value: "postgresql://{{ .Values.superset.database.user }}:{{ .Values.superset.database.password }}@{{ .Values.superset.database.host }}:{{ .Values.superset.database.port }}/{{ .Values.superset.database.name }}"
+        resources:
+          {{- toYaml .Values.superset.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8088
+          initialDelaySeconds: 120
+          periodSeconds: 30
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8088
+          initialDelaySeconds: 60
+          periodSeconds: 10
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.superset.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: superset
+spec:
+  type: {{ .Values.global.networking.type | default "ClusterIP" }}
+  selector:
+    app: superset
+  ports:
+  - name: http
+    port: 8088
+    targetPort: 8088
+    {{- if eq (.Values.global.networking.type | default "ClusterIP") "NodePort" }}
+    nodePort: {{ .Values.superset.service.nodePort }}
+    {{- end }}
+{{- end }}

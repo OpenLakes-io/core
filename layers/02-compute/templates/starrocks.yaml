@@ -1,0 +1,232 @@
+{{- if .Values.starrocks.enabled }}
+---
+# StarRocks FE (Frontend/Master)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.starrocks.fullnameOverride }}-fe
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: starrocks
+    component: fe
+spec:
+  serviceName: {{ .Values.starrocks.fullnameOverride }}-fe
+  replicas: {{ .Values.starrocks.fe.replicas }}
+  selector:
+    matchLabels:
+      app: starrocks
+      component: fe
+  template:
+    metadata:
+      labels:
+        app: starrocks
+        component: fe
+    spec:
+      containers:
+      - name: fe
+        image: {{ .Values.starrocks.fe.image.repository }}:{{ .Values.starrocks.fe.image.tag }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          /opt/starrocks/fe/bin/start_fe.sh
+          tail -f /opt/starrocks/fe/log/fe.log
+        env:
+        - name: HOST_TYPE
+          value: "FQDN"
+        - name: FE_MASTER
+          value: "{{ .Values.starrocks.fullnameOverride }}-fe-0.{{ .Values.starrocks.fullnameOverride }}-fe.{{ .Values.global.namespace }}.svc.cluster.local"
+        ports:
+        - containerPort: 8030
+          name: http
+        - containerPort: 9020
+          name: rpc
+        - containerPort: 9030
+          name: query
+        volumeMounts:
+        - name: fe-data
+          mountPath: /opt/starrocks/fe/meta
+        resources:
+          {{- toYaml .Values.starrocks.fe.resources | nindent 10 }}
+        livenessProbe:
+          tcpSocket:
+            port: 9030
+          initialDelaySeconds: 120
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 9030
+          initialDelaySeconds: 60
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: fe-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: {{ .Values.global.storageClass }}
+      resources:
+        requests:
+          storage: {{ .Values.starrocks.fe.persistence.size }}
+
+---
+# StarRocks BE (Backend/Worker)
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.starrocks.fullnameOverride }}-be
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: starrocks
+    component: be
+spec:
+  serviceName: {{ .Values.starrocks.fullnameOverride }}-be
+  replicas: {{ .Values.starrocks.be.replicas }}
+  selector:
+    matchLabels:
+      app: starrocks
+      component: be
+  template:
+    metadata:
+      labels:
+        app: starrocks
+        component: be
+    spec:
+      initContainers:
+      - name: wait-for-fe
+        image: busybox:latest
+        command:
+        - sh
+        - -c
+        - |
+          until nc -z {{ .Values.starrocks.fullnameOverride }}-fe-0.{{ .Values.starrocks.fullnameOverride }}-fe.{{ .Values.global.namespace }}.svc.cluster.local 9030; do
+            echo "Waiting for FE to be ready..."
+            sleep 5
+          done
+      containers:
+      - name: be
+        image: {{ .Values.starrocks.be.image.repository }}:{{ .Values.starrocks.be.image.tag }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          /opt/starrocks/be/bin/start_be.sh
+          tail -f /opt/starrocks/be/log/be.log
+        env:
+        - name: HOST_TYPE
+          value: "FQDN"
+        - name: FE_MASTER
+          value: "{{ .Values.starrocks.fullnameOverride }}-fe-0.{{ .Values.starrocks.fullnameOverride }}-fe.{{ .Values.global.namespace }}.svc.cluster.local:9010"
+        ports:
+        - containerPort: 8040
+          name: heartbeat
+        - containerPort: 9050
+          name: rpc
+        - containerPort: 8060
+          name: brpc
+        volumeMounts:
+        - name: be-data
+          mountPath: /opt/starrocks/be/storage
+        resources:
+          {{- toYaml .Values.starrocks.be.resources | nindent 10 }}
+        livenessProbe:
+          tcpSocket:
+            port: 9050
+          initialDelaySeconds: 120
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 9050
+          initialDelaySeconds: 60
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: be-data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: {{ .Values.global.storageClass }}
+      resources:
+        requests:
+          storage: {{ .Values.starrocks.be.persistence.size }}
+
+---
+# StarRocks FE Service (Headless - for StatefulSet DNS)
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.starrocks.fullnameOverride }}-fe
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: starrocks
+    component: fe
+spec:
+  clusterIP: None
+  publishNotReadyAddresses: true
+  selector:
+    app: starrocks
+    component: fe
+  ports:
+  - name: query
+    port: 9030
+    targetPort: 9030
+  - name: http
+    port: 8030
+    targetPort: 8030
+  - name: rpc
+    port: 9020
+    targetPort: 9020
+
+---
+# StarRocks FE Service (NodePort - for external access)
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.starrocks.fullnameOverride }}-fe-external
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: starrocks
+    component: fe
+spec:
+  type: {{ .Values.global.networking.type | default "ClusterIP" }}
+  selector:
+    app: starrocks
+    component: fe
+  ports:
+  - name: query
+    port: 9030
+    targetPort: 9030
+    {{- if eq (.Values.global.networking.type | default "ClusterIP") "NodePort" }}
+    nodePort: {{ .Values.starrocks.fe.nodePort }}
+    {{- end }}
+  - name: http
+    port: 8030
+    targetPort: 8030
+  - name: rpc
+    port: 9020
+    targetPort: 9020
+
+---
+# StarRocks BE Service (Headless)
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.starrocks.fullnameOverride }}-be
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: starrocks
+    component: be
+spec:
+  clusterIP: None
+  selector:
+    app: starrocks
+    component: be
+  ports:
+  - name: heartbeat
+    port: 8040
+    targetPort: 8040
+  - name: rpc
+    port: 9050
+    targetPort: 9050
+  - name: brpc
+    port: 8060
+    targetPort: 8060
+{{- end }}

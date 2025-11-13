@@ -1,0 +1,195 @@
+{{- if .Values.openmetadata.enabled }}
+{{- if .Values.openmetadata.automation.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openmetadata-bot-setup
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata
+    component: bot-setup
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: openmetadata
+        component: bot-setup
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: openmetadata-bot-sa
+      initContainers:
+      - name: wait-for-openmetadata
+        image: curlimages/curl:8.5.0
+        command:
+        - sh
+        - -c
+        - |
+          echo "Waiting for OpenMetadata to be ready..."
+          for i in $(seq 1 60); do
+            if curl -f -s http://openmetadata:8585/api/v1/system/version > /dev/null 2>&1; then
+              echo "OpenMetadata is ready!"
+              exit 0
+            fi
+            echo "Attempt $i/60: OpenMetadata not ready, waiting..."
+            sleep 10
+          done
+          echo "ERROR: OpenMetadata failed to become ready"
+          exit 1
+      containers:
+      - name: setup-bot
+        image: alpine:3.19
+        env:
+        - name: OM_HOST
+          value: "openmetadata"
+        - name: OM_PORT
+          value: "8585"
+        - name: ADMIN_USER
+          value: "admin"
+        - name: ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: openmetadata-admin-secrets
+              key: password
+              optional: true
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+
+          # Install dependencies
+          apk add --no-cache curl jq kubectl
+
+          echo "📝 Getting admin JWT token..."
+
+          # Use default admin password if secret not provided
+          ADMIN_PASS=${ADMIN_PASSWORD:-admin}
+
+          # Base64 encode the password as required by OpenMetadata API
+          ADMIN_PASS_B64=$(echo -n "${ADMIN_PASS}" | base64)
+
+          # Get admin JWT token with retry
+          for i in $(seq 1 5); do
+            TOKEN_RESPONSE=$(curl -s -X POST \
+              "http://${OM_HOST}:${OM_PORT}/api/v1/users/login" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"email\": \"${ADMIN_USER}@open-metadata.org\",
+                \"password\": \"${ADMIN_PASS_B64}\"
+              }")
+
+            ADMIN_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken // empty')
+
+            if [ -n "$ADMIN_TOKEN" ] && [ "$ADMIN_TOKEN" != "null" ]; then
+              echo "✅ Got admin token successfully"
+              break
+            fi
+
+            echo "⏳ Attempt $i/5: Failed to get token, retrying..."
+            sleep 5
+          done
+
+          if [ -z "$ADMIN_TOKEN" ] || [ "$ADMIN_TOKEN" = "null" ]; then
+            echo "❌ Failed to get admin token after 5 attempts"
+            echo "Response: $TOKEN_RESPONSE"
+            exit 1
+          fi
+
+          echo "🤖 Creating/updating bot user..."
+
+          # Try to create bot user with admin privileges from the start
+          BOT_RESPONSE=$(curl -s -X PUT \
+            "http://${OM_HOST}:${OM_PORT}/api/v1/users" \
+            -H "Content-Type: application/json" \
+            -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+            -d '{
+              "name": "openlakes-bot",
+              "displayName": "OpenLakes Automation Bot",
+              "email": "bot@openlakes.io",
+              "description": "Bot for automated service registration and metadata ingestion",
+              "isBot": true,
+              "isAdmin": true,
+              "authenticationMechanism": {
+                "authType": "JWT",
+                "config": {
+                  "JWTTokenExpiry": "Unlimited"
+                }
+              }
+            }')
+
+          echo "Bot response: $BOT_RESPONSE"
+
+          # Extract bot ID for token retrieval
+          BOT_ID=$(echo "$BOT_RESPONSE" | jq -r '.id // empty')
+
+          # Extract initial token from creation response (might not be present for security)
+          BOT_TOKEN=$(echo "$BOT_RESPONSE" | jq -r '.authenticationMechanism.config.JWTToken // empty')
+
+          # Use the dedicated /v1/users/token/{id} endpoint to get the JWT token
+          if [ -n "$BOT_ID" ] && [ "$BOT_ID" != "null" ]; then
+            echo "  🔑 Retrieving bot JWT token using dedicated endpoint..."
+            TOKEN_RESPONSE=$(curl -s -X GET \
+              "http://${OM_HOST}:${OM_PORT}/api/v1/users/token/${BOT_ID}" \
+              -H "Authorization: Bearer ${ADMIN_TOKEN}")
+
+            # The token endpoint returns JSON with JWTToken field
+            NEW_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.JWTToken // empty')
+
+            if [ -n "$NEW_TOKEN" ] && [ "$NEW_TOKEN" != "null" ] && [ "$NEW_TOKEN" != "" ]; then
+              BOT_TOKEN="$NEW_TOKEN"
+              echo "  ✅ Retrieved bot JWT token via /users/token endpoint"
+            fi
+          else
+            # Bot might already exist, try to get it by name
+            echo "  ⚠️  No bot ID in response, checking if bot already exists..."
+
+            EXISTING_BOT=$(curl -s -X GET \
+              "http://${OM_HOST}:${OM_PORT}/api/v1/users/name/openlakes-bot" \
+              -H "Authorization: Bearer ${ADMIN_TOKEN}")
+
+            BOT_ID=$(echo "$EXISTING_BOT" | jq -r '.id // empty')
+
+            if [ -n "$BOT_ID" ] && [ "$BOT_ID" != "null" ]; then
+              echo "  🔑 Bot exists, retrieving JWT token..."
+              TOKEN_RESPONSE=$(curl -s -X GET \
+                "http://${OM_HOST}:${OM_PORT}/api/v1/users/token/${BOT_ID}" \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}")
+
+              # The token endpoint returns JSON with JWTToken field
+              BOT_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.JWTToken // empty')
+
+              if [ -n "$BOT_TOKEN" ] && [ "$BOT_TOKEN" != "null" ] && [ "$BOT_TOKEN" != "" ]; then
+                echo "  ✅ Retrieved existing bot JWT token"
+              fi
+            fi
+          fi
+
+          # Final check
+          if [ -z "$BOT_TOKEN" ] || [ "$BOT_TOKEN" = "null" ] || [ "$BOT_TOKEN" = "" ]; then
+            echo "❌ Failed to create or retrieve bot token"
+            exit 1
+          fi
+
+          echo "✅ Bot setup complete. Token (first 20 chars): ${BOT_TOKEN:0:20}..."
+
+          # Store token in Kubernetes secret
+          echo "💾 Storing bot token in Kubernetes secret..."
+          kubectl create secret generic openmetadata-bot-token \
+            --from-literal=token="${BOT_TOKEN}" \
+            --namespace="${NAMESPACE}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "✅ Bot setup completed successfully!"
+{{- end }}
+{{- end }}

@@ -1,0 +1,124 @@
+# OpenMetadata Values for Official Helm Chart
+# Using existing PostgreSQL and OpenSearch
+
+replicaCount: 1
+
+openmetadata:
+  config:
+    logLevel: INFO
+    openmetadata:
+      host: "0.0.0.0"
+      port: 8585
+      adminPort: 8586
+    
+    # Use OpenSearch instead of Elasticsearch
+    elasticsearch:
+      enabled: true
+      host: opensearch.openlakes.svc.cluster.local
+      searchType: opensearch
+      port: 9200
+      scheme: http
+      trustStore:
+        enabled: false
+    
+    # Use PostgreSQL instead of MySQL
+    database:
+      enabled: true
+      host: openlakes-postgres.openlakes.svc.cluster.local
+      port: 5432
+      driverClass: org.postgresql.Driver
+      dbScheme: postgresql
+      databaseName: openmetadata_db
+      auth:
+        username: openmetadata_user
+        password:
+          secretRef: ""
+          secretKey: ""
+      dbParams: ""
+    
+    # Disable pipeline service for now
+    pipelineServiceClientConfig:
+      enabled: false
+      className: "org.openmetadata.service.clients.pipeline.noop.NoopClient"
+      apiEndpoint: ""
+      metadataApiEndpoint: ""
+    
+    authentication:
+      provider: basic
+      publicKeys:
+        - "http://openmetadata:8585/api/v1/system/config/jwks"
+      enableSelfSignup: true
+      jwtPrincipalClaims:
+        - "email"
+        - "preferred_username"
+        - "sub"
+    
+    authorizer:
+      className: "org.openmetadata.service.security.DefaultAuthorizer"
+      containerRequestFilter: "org.openmetadata.service.security.JwtFilter"
+      initialAdmins:
+        - "admin"
+      principalDomain: "open-metadata.org"
+    
+    secretsManager:
+      provider: db
+      prefix: ""
+      tags: []
+      additionalParameters: {}
+    
+    web:
+      uriPath: "/api"
+      hsts:
+        enabled: true
+        maxAge: "365 days"
+        includeSubDomains: "true"
+        preload: "true"
+
+image:
+  repository: docker.getcollate.io/openmetadata/server
+  pullPolicy: IfNotPresent
+  tag: 1.10.6
+
+service:
+  type: NodePort
+  port: 8585
+
+resources:
+  limits:
+    cpu: 2000m
+    memory: 2Gi
+  requests:
+    cpu: 500m
+    memory: 1Gi
+
+extraEnvs:
+  - name: DB_PARAMS
+    value: ""
+  - name: DB_USER_PASSWORD
+    value: "openmetadata_pass"
+  - name: AIRFLOW_PASSWORD
+    value: ""
+
+livenessProbe:
+  initialDelaySeconds: 120
+  periodSeconds: 30
+  failureThreshold: 5
+  httpGet:
+    path: /healthcheck
+    port: http-admin
+
+readinessProbe:
+  initialDelaySeconds: 30
+  periodSeconds: 5
+  failureThreshold: 3
+  httpGet:
+    path: /health
+    port: http-admin
+
+startupProbe:
+  periodSeconds: 60
+  failureThreshold: 5
+  successThreshold: 1
+  httpGet:
+    path: /health
+    port: http-admin

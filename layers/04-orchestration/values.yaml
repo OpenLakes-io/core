@@ -1,0 +1,42 @@
+global:
+  networking:
+    type: NodePort
+  storageClass: local-path
+  namespace: openlakes
+
+airflow:
+  enabled: true
+  fullnameOverride: airflow
+  image:
+    repository: apache/airflow
+    tag: "3.1.2"
+  executor: LocalExecutor
+  webserver:
+    nodePort: 30082
+    replicas: 1
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+  scheduler:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+  database:
+    host: postgres
+    port: 5432
+    name: airflow
+    user: openlakes
+    password: openlakes123
+  persistence:
+    size: 10Gi
+  auth:
+    adminUser: admin
+    adminPassword: admin123
+    adminEmail: admin@openlakes.local

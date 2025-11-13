@@ -1,0 +1,51 @@
+global:
+  networking:
+    type: NodePort
+  storageClass: local-path
+  namespace: openlakes
+
+trino:
+  enabled: true
+  fullnameOverride: trino
+  image:
+    repository: trinodb/trino
+    tag: "435"
+  coordinator:
+    nodePort: 30081
+  resources:
+    requests:
+      cpu: 1
+      memory: 2Gi
+    limits:
+      memory: 4Gi
+
+starrocks:
+  enabled: true
+  fullnameOverride: starrocks
+  fe:
+    image:
+      repository: starrocks/fe-ubuntu
+      tag: "3.5-latest"
+    replicas: 1
+    nodePort: 30930
+    resources:
+      requests:
+        cpu: 1
+        memory: 2Gi
+      limits:
+        memory: 4Gi
+    persistence:
+      size: 10Gi
+  be:
+    image:
+      repository: starrocks/be-ubuntu
+      tag: "3.5-latest"
+    replicas: 1
+    resources:
+      requests:
+        cpu: 2
+        memory: 4Gi
+      limits:
+        memory: 8Gi
+    persistence:
+      size: 50Gi

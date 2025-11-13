@@ -1,0 +1,31 @@
+global:
+  networking:
+    type: NodePort
+  storageClass: local-path
+  namespace: openlakes
+
+flink:
+  enabled: true  # Kafka is now operational
+  fullnameOverride: flink
+  image:
+    repository: flink
+    tag: "latest"
+  jobmanager:
+    replicas: 1
+    nodePort: 30083
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+  taskmanager:
+    replicas: 1
+    resources:
+      requests:
+        cpu: 250m
+        memory: 512Mi
+      limits:
+        memory: 1Gi
+  persistence:
+    size: 10Gi

@@ -1,0 +1,101 @@
+{{- if .Values.trino.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.trino.fullnameOverride }}-config
+  namespace: {{ .Values.global.namespace }}
+data:
+  config.properties: |
+    coordinator=true
+    node-scheduler.include-coordinator=true
+    http-server.http.port=8080
+    discovery.uri=http://localhost:8080
+    query.max-memory=2GB
+    query.max-memory-per-node=1GB
+  node.properties: |
+    node.environment=production
+    node.data-dir=/data/trino
+  jvm.config: |
+    -server
+    -Xmx2G
+    -XX:+UseG1GC
+    -XX:G1HeapRegionSize=32M
+    -XX:+ExplicitGCInvokesConcurrent
+    -XX:+HeapDumpOnOutOfMemoryError
+    -XX:+ExitOnOutOfMemoryError
+  log.properties: |
+    io.trino=INFO
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.trino.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: trino
+    component: coordinator
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trino
+  template:
+    metadata:
+      labels:
+        app: trino
+        component: coordinator
+    spec:
+      containers:
+      - name: trino
+        image: {{ .Values.trino.image.repository }}:{{ .Values.trino.image.tag }}
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/trino
+        - name: data
+          mountPath: /data/trino
+        resources:
+          {{- toYaml .Values.trino.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /v1/info
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /v1/info
+            port: 8080
+          initialDelaySeconds: 30
+          periodSeconds: 5
+      volumes:
+      - name: config
+        configMap:
+          name: {{ .Values.trino.fullnameOverride }}-config
+      - name: data
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.trino.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: trino
+spec:
+  type: {{ .Values.global.networking.type | default "ClusterIP" }}
+  selector:
+    app: trino
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    {{- if eq (.Values.global.networking.type | default "ClusterIP") "NodePort" }}
+    nodePort: {{ .Values.trino.coordinator.nodePort }}
+    {{- end }}
+{{- end }}

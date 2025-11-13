@@ -1,0 +1,190 @@
+global:
+  networking:
+    type: NodePort
+  storageClass: local-path
+  namespace: openlakes
+
+openmetadata:
+  # OpenMetadata requires deployment via official Helm chart
+  # This layer provides configuration and connector documentation
+  enabled: true
+
+  # Installation Instructions:
+  # 1. Add OpenMetadata Helm repo:
+  #    helm repo add open-metadata https://helm.open-metadata.org/
+  #    helm repo update
+  #
+  # 2. Create required Kubernetes secrets:
+  #    kubectl create secret generic openmetadata-db-secrets \
+  #      --from-literal=password=openlakes123 \
+  #      -n openlakes
+  #
+  # 3. Install OpenMetadata with custom values:
+  #    helm install openmetadata open-metadata/openmetadata \
+  #      -f openmetadata-values-simple.yaml \
+  #      --namespace openlakes
+
+  nodePort: 30585
+
+  # Database Configuration (using existing PostgreSQL)
+  database:
+    host: openlakes-postgres
+    port: 5432
+    databaseName: openmetadata
+    username: openlakes
+
+  # Elasticsearch Configuration
+  elasticsearch:
+    # Use bundled Elasticsearch or external
+    enabled: true
+    replicas: 1
+
+  # Automated Service Registration
+  automation:
+    # Enable automated bot creation and service registration
+    enabled: true
+
+    # Admin credentials for bot creation (default: admin/admin)
+    # Override with openmetadata-admin-secrets for production
+    adminUser: admin
+    # adminPassword: admin  # Managed via secret
+
+    # Retry configuration
+    retryAttempts: 3
+    retryDelay: 10
+
+# Connector Configurations for OpenLakes Components
+connectors:
+  # Database Connectors
+  postgresql:
+    enabled: true
+    type: Postgres
+    serviceType: Database
+    config:
+      host: openlakes-postgres
+      port: 5432
+      username: openlakes
+      database: postgres
+      # Configure via UI or API after deployment
+
+  trino:
+    enabled: true
+    type: Trino
+    serviceType: Database
+    config:
+      host: openlakes-trino
+      port: 8080
+      username: trino
+      catalog: system
+
+  # Messaging Connectors
+  kafka:
+    enabled: true
+    type: Kafka
+    serviceType: Messaging
+    config:
+      bootstrapServers: openlakes-kafka:9092
+      schemaRegistryURL: ""  # Optional if using schema registry
+
+  # Pipeline Connectors
+  airflow:
+    enabled: true
+    type: Airflow
+    serviceType: Pipeline
+    config:
+      hostPort: http://openlakes-airflow-webserver:8080
+      # numberOfStatus: 10  # Number of status to display
+
+  flink:
+    enabled: true
+    type: Flink
+    serviceType: Pipeline
+    config:
+      hostPort: http://openlakes-flink-jobmanager:8081
+
+  # Dashboard Connectors
+  superset:
+    enabled: true
+    type: Superset
+    serviceType: Dashboard
+    config:
+      hostPort: http://openlakes-superset:8088
+      username: admin
+      # password via secret
+
+  # Storage Connectors (MinIO as S3)
+  minio:
+    enabled: true
+    type: S3
+    serviceType: StorageService
+    config:
+      awsAccessKeyId: admin
+      awsRegion: us-east-1
+      endPointURL: http://openlakes-minio:9000
+      # awsSecretAccessKey via secret
+
+# Service Registration Configuration
+# These services will be automatically registered with OpenMetadata
+services:
+  postgresql:
+    enabled: true
+    name: openlakes-postgres
+    description: OpenLakes PostgreSQL Database - Main operational database
+    username: openlakes
+    password: openlakes123
+    host: postgres.openlakes.svc.cluster.local
+    port: 5432
+    database: openlakes
+
+  trino:
+    enabled: false  # Enable when Trino is deployed
+    name: openlakes-trino
+    description: OpenLakes Trino - Distributed SQL query engine
+    username: trino
+    host: trino.openlakes.svc.cluster.local
+    port: 8080
+    catalog: hive
+
+  starrocks:
+    enabled: false  # Enable when StarRocks is deployed
+    name: openlakes-starrocks
+    description: OpenLakes StarRocks - High-performance analytical database
+    username: root
+    host: starrocks-fe.openlakes.svc.cluster.local
+    port: 9030
+    database: default
+
+  minio:
+    enabled: true
+    name: openlakes-minio
+    description: OpenLakes MinIO - S3-compatible object storage
+    accessKey: admin
+    secretKey: admin123
+    region: us-east-1
+    endpoint: http://minio.openlakes.svc.cluster.local:9000
+
+  kafka:
+    enabled: true
+    name: openlakes-kafka
+    description: OpenLakes Kafka - Event streaming platform
+    bootstrapServers: kafka.openlakes.svc.cluster.local:9092
+
+  opensearch:
+    enabled: true
+    name: openlakes-opensearch
+    description: OpenLakes OpenSearch - Search and analytics engine
+    endpoint: http://opensearch.openlakes.svc.cluster.local:9200
+
+  airflow:
+    enabled: false  # Enable when Airflow is deployed
+    name: openlakes-airflow
+    description: OpenLakes Airflow - Workflow orchestration platform
+    endpoint: http://airflow-webserver.openlakes.svc.cluster.local:8080
+
+  superset:
+    enabled: false  # Enable when Superset is deployed
+    name: openlakes-superset
+    description: OpenLakes Superset - Business intelligence platform
+    endpoint: http://superset.openlakes.svc.cluster.local:8088
+    username: admin
+    password: admin

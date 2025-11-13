@@ -1,0 +1,362 @@
+{{- if .Values.openmetadata.enabled }}
+---
+apiVersion: v1
+kind: Secret
+metadata:
+  name: openmetadata-connector-credentials
+  namespace: {{ .Values.global.namespace }}
+type: Opaque
+stringData:
+  # Database credentials
+  postgres-password: "openlakes123"
+
+  # Airflow credentials
+  airflow-password: "admin123"
+
+  # Superset credentials
+  superset-password: "admin"
+
+  # MinIO credentials
+  minio-access-key: "admin"
+  minio-secret-key: "admin123"
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openmetadata-connector-setup
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata
+    component: connector-setup
+data:
+  setup-connectors.py: |
+    #!/usr/bin/env python3
+    import os
+    import time
+    import sys
+    from metadata.generated.schema.entity.services.connections.metadata.openMetadataConnection import (
+        OpenMetadataConnection,
+    )
+    from metadata.generated.schema.security.client.openMetadataJWTClientConfig import (
+        OpenMetadataJWTClientConfig,
+    )
+    from metadata.ingestion.ometa.ometa_api import OpenMetadata
+
+    print("Waiting for OpenMetadata to be ready...")
+    import requests
+    for i in range(60):
+        try:
+            response = requests.get("http://openmetadata:8585/api/v1/health", timeout=5)
+            if response.status_code == 200:
+                print("OpenMetadata is ready!")
+                break
+        except:
+            pass
+        print(f"Attempt {i+1}/60: OpenMetadata not ready yet, waiting...")
+        time.sleep(10)
+    else:
+        print("ERROR: OpenMetadata failed to become ready after 10 minutes")
+        sys.exit(1)
+
+    print("Waiting 30 more seconds for full initialization...")
+    time.sleep(30)
+
+    print("Note: Automated connector setup via API requires proper JWT configuration.")
+    print("Connectors can be set up manually via the OpenMetadata UI at http://localhost:30381")
+    print("Login with: admin / admin")
+    print("")
+    print("Manual connector configurations are available in the ConfigMap: openmetadata-connector-configs")
+    print("")
+    print("Connection details:")
+    print("- PostgreSQL: openlakes-postgres:5432 (user: openlakes, password:", os.getenv("POSTGRES_PASSWORD", "openlakes123"), ")")
+    print("- Trino: openlakes-trino:8080")
+    print("- Kafka: openlakes-kafka:9092")
+    print("- Airflow: openlakes-airflow-webserver:8080")
+    print("- Flink: openlakes-flink-jobmanager:8081")
+    print("- Superset: openlakes-superset:8088 (user: admin, password:", os.getenv("SUPERSET_PASSWORD", "admin"), ")")
+
+  setup-connectors.sh: |
+    #!/bin/bash
+    set -e
+
+    echo "Waiting for OpenMetadata to be ready..."
+    until curl -s http://openmetadata:8585/api/v1/health > /dev/null 2>&1; do
+      echo "OpenMetadata not ready yet, waiting..."
+      sleep 10
+    done
+
+    echo "OpenMetadata is ready! Waiting 30 more seconds for full initialization..."
+    sleep 30
+
+    # Get admin token (trying multiple methods)
+    echo "Getting authentication token..."
+
+    # Try to get JWT token
+    TOKEN_RESPONSE=$(curl -s -X POST "http://openmetadata:8585/api/v1/users/login" \
+      -H "Content-Type: application/json" \
+      -d '{"email": "admin@openmetadata.org", "password": "admin"}')
+
+    TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken' 2>/dev/null)
+
+    # If JWT fails, try basic auth
+    if [ -z "$TOKEN" ] || [ "$TOKEN" = "null" ]; then
+      echo "JWT token failed, using Basic Auth..."
+      AUTH_HEADER="Authorization: Basic $(echo -n 'admin:admin' | base64)"
+    else
+      echo "Got JWT token successfully"
+      AUTH_HEADER="Authorization: Bearer $TOKEN"
+    fi
+
+    echo "Setting up connectors..."
+
+    # Function to create service
+    create_service() {
+      local service_name=$1
+      local service_json=$2
+
+      echo "Creating $service_name..."
+      RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://openmetadata:8585/api/v1/services/databaseServices" \
+        -H "$AUTH_HEADER" \
+        -H "Content-Type: application/json" \
+        -d "$service_json")
+
+      HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+      BODY=$(echo "$RESPONSE" | sed '$d')
+
+      if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+        echo "  ✓ $service_name created successfully"
+      elif [ "$HTTP_CODE" = "409" ]; then
+        echo "  ✓ $service_name already exists"
+      else
+        echo "  ✗ Failed to create $service_name (HTTP $HTTP_CODE)"
+        echo "  Response: $BODY"
+      fi
+    }
+
+    create_messaging_service() {
+      local service_name=$1
+      local service_json=$2
+
+      echo "Creating $service_name..."
+      RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://openmetadata:8585/api/v1/services/messagingServices" \
+        -H "$AUTH_HEADER" \
+        -H "Content-Type: application/json" \
+        -d "$service_json")
+
+      HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+      BODY=$(echo "$RESPONSE" | sed '$d')
+
+      if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+        echo "  ✓ $service_name created successfully"
+      elif [ "$HTTP_CODE" = "409" ]; then
+        echo "  ✓ $service_name already exists"
+      else
+        echo "  ✗ Failed to create $service_name (HTTP $HTTP_CODE)"
+        echo "  Response: $BODY"
+      fi
+    }
+
+    create_pipeline_service() {
+      local service_name=$1
+      local service_json=$2
+
+      echo "Creating $service_name..."
+      RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://openmetadata:8585/api/v1/services/pipelineServices" \
+        -H "$AUTH_HEADER" \
+        -H "Content-Type: application/json" \
+        -d "$service_json")
+
+      HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+      BODY=$(echo "$RESPONSE" | sed '$d')
+
+      if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+        echo "  ✓ $service_name created successfully"
+      elif [ "$HTTP_CODE" = "409" ]; then
+        echo "  ✓ $service_name already exists"
+      else
+        echo "  ✗ Failed to create $service_name (HTTP $HTTP_CODE)"
+        echo "  Response: $BODY"
+      fi
+    }
+
+    create_dashboard_service() {
+      local service_name=$1
+      local service_json=$2
+
+      echo "Creating $service_name..."
+      RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://openmetadata:8585/api/v1/services/dashboardServices" \
+        -H "$AUTH_HEADER" \
+        -H "Content-Type: application/json" \
+        -d "$service_json")
+
+      HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+      BODY=$(echo "$RESPONSE" | sed '$d')
+
+      if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+        echo "  ✓ $service_name created successfully"
+      elif [ "$HTTP_CODE" = "409" ]; then
+        echo "  ✓ $service_name already exists"
+      else
+        echo "  ✗ Failed to create $service_name (HTTP $HTTP_CODE)"
+        echo "  Response: $BODY"
+      fi
+    }
+
+    # PostgreSQL
+    create_service "PostgreSQL" '{
+      "name": "openlakes-postgres",
+      "serviceType": "Postgres",
+      "description": "OpenLakes PostgreSQL Database",
+      "connection": {
+        "config": {
+          "type": "Postgres",
+          "username": "openlakes",
+          "authType": {"password": "'"$POSTGRES_PASSWORD"'"},
+          "hostPort": "openlakes-postgres:5432",
+          "database": "postgres"
+        }
+      }
+    }'
+
+    # Trino
+    create_service "Trino" '{
+      "name": "openlakes-trino",
+      "serviceType": "Trino",
+      "description": "OpenLakes Trino Query Engine",
+      "connection": {
+        "config": {
+          "type": "Trino",
+          "username": "trino",
+          "hostPort": "openlakes-trino:8080",
+          "catalog": "system"
+        }
+      }
+    }'
+
+    # Kafka
+    create_messaging_service "Kafka" '{
+      "name": "openlakes-kafka",
+      "serviceType": "Kafka",
+      "description": "OpenLakes Kafka Messaging",
+      "connection": {
+        "config": {
+          "type": "Kafka",
+          "bootstrapServers": "openlakes-kafka:9092"
+        }
+      }
+    }'
+
+    # Airflow
+    create_pipeline_service "Airflow" '{
+      "name": "openlakes-airflow",
+      "serviceType": "Airflow",
+      "description": "OpenLakes Airflow Orchestration",
+      "connection": {
+        "config": {
+          "type": "Airflow",
+          "hostPort": "http://openlakes-airflow-webserver:8080",
+          "connection": {
+            "type": "Backend"
+          }
+        }
+      }
+    }'
+
+    # Flink
+    create_pipeline_service "Flink" '{
+      "name": "openlakes-flink",
+      "serviceType": "Flink",
+      "description": "OpenLakes Flink Stream Processing",
+      "connection": {
+        "config": {
+          "type": "Flink",
+          "hostPort": "http://openlakes-flink-jobmanager:8081"
+        }
+      }
+    }'
+
+    # Superset
+    create_dashboard_service "Superset" '{
+      "name": "openlakes-superset",
+      "serviceType": "Superset",
+      "description": "OpenLakes Superset Dashboards",
+      "connection": {
+        "config": {
+          "type": "Superset",
+          "hostPort": "http://openlakes-superset:8088",
+          "connection": {
+            "provider": "db",
+            "username": "admin",
+            "password": "'"$SUPERSET_PASSWORD"'"
+          }
+        }
+      }
+    }'
+
+    echo "Connector setup completed!"
+    echo "You can now visit OpenMetadata UI to see all connected services."
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openmetadata-connector-setup
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata
+    component: connector-setup
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: openmetadata
+        component: connector-setup
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: setup-connectors
+        image: python:3.11-slim
+        command:
+        - /bin/bash
+        - -c
+        - |
+          pip install openmetadata-ingestion==1.5.7 --quiet
+          python /scripts/setup-connectors.py
+        env:
+        - name: POSTGRES_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: openmetadata-connector-credentials
+              key: postgres-password
+        - name: AIRFLOW_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: openmetadata-connector-credentials
+              key: airflow-password
+        - name: SUPERSET_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: openmetadata-connector-credentials
+              key: superset-password
+        - name: MINIO_ACCESS_KEY
+          valueFrom:
+            secretKeyRef:
+              name: openmetadata-connector-credentials
+              key: minio-access-key
+        - name: MINIO_SECRET_KEY
+          valueFrom:
+            secretKeyRef:
+              name: openmetadata-connector-credentials
+              key: minio-secret-key
+        volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+      volumes:
+      - name: scripts
+        configMap:
+          name: openmetadata-connector-setup
+          defaultMode: 0755
+{{- end }}

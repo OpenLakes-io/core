@@ -1,0 +1,109 @@
+{{- if .Values.opensearch.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: opensearch
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: opensearch
+    layer: infrastructure
+spec:
+  type: ClusterIP
+  ports:
+  - port: 9200
+    targetPort: 9200
+    protocol: TCP
+    name: http
+  - port: 9300
+    targetPort: 9300
+    protocol: TCP
+    name: transport
+  selector:
+    app: opensearch
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: opensearch
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: opensearch
+    layer: infrastructure
+spec:
+  serviceName: opensearch
+  replicas: {{ .Values.opensearch.replicas }}
+  selector:
+    matchLabels:
+      app: opensearch
+  template:
+    metadata:
+      labels:
+        app: opensearch
+        layer: infrastructure
+    spec:
+      initContainers:
+      - name: sysctl
+        image: busybox
+        command:
+        - sysctl
+        - -w
+        - vm.max_map_count=262144
+        securityContext:
+          privileged: true
+      - name: init-dirs
+        image: busybox
+        command:
+        - sh
+        - -c
+        - |
+          mkdir -p /usr/share/opensearch/data
+          chmod 777 /usr/share/opensearch/data
+        volumeMounts:
+        - name: data
+          mountPath: /usr/share/opensearch/data
+      containers:
+      - name: opensearch
+        image: {{ .Values.opensearch.image }}:{{ .Values.opensearch.tag }}
+        ports:
+        - containerPort: 9200
+          name: http
+        - containerPort: 9300
+          name: transport
+        env:
+        - name: cluster.name
+          value: {{ .Values.opensearch.clusterName }}
+        - name: node.name
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.name
+        - name: discovery.type
+          value: {{ .Values.opensearch.discoveryType }}
+        - name: bootstrap.memory_lock
+          value: "false"
+        - name: OPENSEARCH_JAVA_OPTS
+          value: "-Xms{{ .Values.opensearch.resources.javaOpts.xms }} -Xmx{{ .Values.opensearch.resources.javaOpts.xmx }}"
+        - name: DISABLE_SECURITY_PLUGIN
+          value: "{{ .Values.opensearch.security.disabled }}"
+        - name: DISABLE_INSTALL_DEMO_CONFIG
+          value: "true"
+        resources:
+          requests:
+            cpu: {{ .Values.opensearch.resources.requests.cpu }}
+            memory: {{ .Values.opensearch.resources.requests.memory }}
+          limits:
+            cpu: {{ .Values.opensearch.resources.limits.cpu }}
+            memory: {{ .Values.opensearch.resources.limits.memory }}
+        volumeMounts:
+        - name: data
+          mountPath: /usr/share/opensearch/data
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: {{ .Values.opensearch.storageClass }}
+      resources:
+        requests:
+          storage: {{ .Values.opensearch.storageSize }}
+{{- end }}

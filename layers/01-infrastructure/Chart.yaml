@@ -1,0 +1,6 @@
+apiVersion: v2
+name: openlakes-infrastructure
+version: 1.0.0
+description: OpenLakes infrastructure layer - databases, storage, and messaging
+type: application
+appVersion: "1.0.0"

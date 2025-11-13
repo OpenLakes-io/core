@@ -1,0 +1,60 @@
+{{- if and .Values.openmetadata.enabled .Values.openmetadata.automation.enabled }}
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: openmetadata-service-registration
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata
+    component: service-registration
+    layer: catalog
+  annotations:
+    "helm.sh/hook": post-install,post-upgrade
+    "helm.sh/hook-weight": "5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: {{ .Values.openmetadata.automation.retryAttempts | default 3 }}
+  template:
+    metadata:
+      labels:
+        app: service-registration
+        layer: catalog
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: openmetadata-operator
+      containers:
+      - name: register-services
+        image: alpine:3.19
+        command:
+        - sh
+        - -c
+        - |
+          # Install dependencies
+          apk add --no-cache curl jq
+
+          # Make script executable and run it
+          chmod +x /scripts/register-services.sh
+          /scripts/register-services.sh
+        env:
+        - name: OPENMETADATA_HOST
+          value: "openmetadata"
+        - name: OPENMETADATA_PORT
+          value: "8585"
+        - name: ADMIN_USER
+          value: {{ .Values.openmetadata.automation.adminUser | default "admin" | quote }}
+        - name: ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: openmetadata-admin-secrets
+              key: password
+              optional: true
+        volumeMounts:
+        - name: script
+          mountPath: /scripts
+      volumes:
+      - name: script
+        configMap:
+          name: openmetadata-service-registration
+          defaultMode: 0755
+{{- end }}

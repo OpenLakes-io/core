@@ -1,0 +1,6 @@
+apiVersion: v2
+name: openlakes-analytics
+version: 1.0.0
+description: OpenLakes analytics layer - BI, notebooks, and metadata management
+type: application
+appVersion: "1.0.0"

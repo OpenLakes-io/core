@@ -1,0 +1,140 @@
+{{- if .Values.kafka.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.kafka.fullnameOverride }}-config
+  namespace: {{ .Values.global.namespace }}
+data:
+  server.properties: |
+    # KRaft mode configuration
+    process.roles=broker,controller
+    node.id=1
+    controller.quorum.voters=1@{{ .Values.kafka.fullnameOverride }}-0.{{ .Values.kafka.fullnameOverride }}.{{ .Values.global.namespace }}.svc.cluster.local:9093
+    listeners=PLAINTEXT://:9092,CONTROLLER://:9093
+    advertised.listeners=PLAINTEXT://{{ .Values.kafka.fullnameOverride }}-0.{{ .Values.kafka.fullnameOverride }}.{{ .Values.global.namespace }}.svc.cluster.local:9092
+    controller.listener.names=CONTROLLER
+    listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+    inter.broker.listener.name=PLAINTEXT
+
+    # Storage
+    log.dirs=/var/lib/kafka/data
+
+    # Basic settings
+    num.network.threads=3
+    num.io.threads=8
+    socket.send.buffer.bytes=102400
+    socket.receive.buffer.bytes=102400
+    socket.request.max.bytes=104857600
+
+    # Log settings
+    log.retention.hours=168
+    log.segment.bytes=1073741824
+    log.retention.check.interval.ms=300000
+
+    # Topic defaults
+    num.partitions=3
+    default.replication.factor=1
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.kafka.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: kafka
+    component: messaging
+spec:
+  serviceName: {{ .Values.kafka.fullnameOverride }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+        component: messaging
+    spec:
+      containers:
+      - name: kafka
+        image: {{ .Values.kafka.image.repository }}:{{ .Values.kafka.image.tag }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          # Create server.properties
+          cat > /tmp/server.properties <<EOF
+          process.roles=broker,controller
+          node.id=1
+          controller.quorum.voters=1@{{ .Values.kafka.fullnameOverride }}-0.{{ .Values.kafka.fullnameOverride }}.{{ .Values.global.namespace }}.svc.cluster.local:9093
+          listeners=PLAINTEXT://:9092,CONTROLLER://:9093
+          advertised.listeners=PLAINTEXT://{{ .Values.kafka.fullnameOverride }}-0.{{ .Values.kafka.fullnameOverride }}.{{ .Values.global.namespace }}.svc.cluster.local:9092
+          controller.listener.names=CONTROLLER
+          listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+          inter.broker.listener.name=PLAINTEXT
+          log.dirs=/var/lib/kafka/data
+          num.partitions=3
+          default.replication.factor=1
+          EOF
+
+          # Generate cluster ID and format storage
+          CLUSTER_ID=$(/opt/kafka/bin/kafka-storage.sh random-uuid)
+          echo "Cluster ID: $CLUSTER_ID"
+
+          # Format storage
+          /opt/kafka/bin/kafka-storage.sh format -t $CLUSTER_ID -c /tmp/server.properties
+
+          # Start Kafka
+          /opt/kafka/bin/kafka-server-start.sh /tmp/server.properties
+        ports:
+        - containerPort: 9092
+          name: kafka
+        - containerPort: 9093
+          name: controller
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/kafka/data
+        resources:
+          {{- toYaml .Values.kafka.resources | nindent 10 }}
+        livenessProbe:
+          tcpSocket:
+            port: 9092
+          initialDelaySeconds: 60
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 9092
+          initialDelaySeconds: 30
+          periodSeconds: 10
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: {{ .Values.global.storageClass }}
+      resources:
+        requests:
+          storage: {{ .Values.kafka.persistence.size }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.kafka.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: kafka
+spec:
+  type: {{ .Values.kafka.service.type | default "ClusterIP" }}
+  selector:
+    app: kafka
+  ports:
+  - name: kafka
+    port: 9092
+    targetPort: 9092
+    {{- if eq (.Values.kafka.service.type | default "ClusterIP") "NodePort" }}
+    nodePort: {{ .Values.kafka.service.nodePort }}
+    {{- end }}
+{{- end }}

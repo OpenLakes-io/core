@@ -1,0 +1,54 @@
+global:
+  networking:
+    type: NodePort
+  storageClass: local-path
+  namespace: openlakes
+
+superset:
+  enabled: true
+  fullnameOverride: superset
+  image:
+    repository: apache/superset
+    tag: "latest"
+  service:
+    nodePort: 30088
+  database:
+    host: openlakes-postgres
+    port: 5432
+    name: superset
+    user: openlakes
+    password: openlakes123
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      memory: 2Gi
+  auth:
+    adminUser: admin
+    adminPassword: admin123
+    adminEmail: admin@openlakes.local
+
+jupyterhub:
+  enabled: true
+  fullnameOverride: jupyter
+  image:
+    repository: jupyterhub/jupyterhub
+    tag: "5.4.2"
+  singleuser:
+    image:
+      repository: jupyter/datascience-notebook
+      tag: "x86_64-ubuntu-22.04"
+  service:
+    nodePort: 30888
+  resources:
+    requests:
+      cpu: 500m
+      memory: 1Gi
+    limits:
+      memory: 2Gi
+  persistence:
+    size: 10Gi
+  auth:
+    adminUsers:
+      - admin

@@ -1,0 +1,84 @@
+# OpenMetadata Configuration for OpenLakes - Simplified
+# Using OpenSearch, external PostgreSQL, minimal custom configuration
+
+openmetadata:
+  config:
+    # OpenSearch Configuration
+    elasticsearch:
+      enabled: true
+      host: opensearch
+      searchType: opensearch
+      port: 9200
+      scheme: http
+      auth:
+        enabled: false
+
+    # PostgreSQL Database Configuration
+    database:
+      enabled: true
+      host: openlakes-postgres.openlakes.svc.cluster.local
+      port: 5432
+      driverClass: org.postgresql.Driver
+      dbScheme: postgresql
+      databaseName: openmetadata
+      auth:
+        username: openlakes
+        password:
+          secretRef: openmetadata-db-secrets
+          secretKey: password
+
+    # Airflow integration
+    pipelineServiceClientConfig:
+      enabled: true
+      apiEndpoint: http://openlakes-airflow-webserver.openlakes.svc.cluster.local:8080
+      metadataApiEndpoint: http://openmetadata:8585/api
+      verifySsl: "no-ssl"
+      auth:
+        enabled: true
+        username: admin
+        password:
+          secretRef: airflow-secrets
+          secretKey: password
+
+# Service as NodePort
+service:
+  type: NodePort
+
+# Reduced resources
+resources:
+  requests:
+    cpu: 250m
+    memory: 1Gi
+  limits:
+    memory: 2Gi
+
+# OpenSearch (bundled)
+opensearch:
+  enabled: true
+  replicas: 1
+  singleNode: true
+  opensearchJavaOpts: "-Xmx1g -Xms1g"
+  resources:
+    requests:
+      cpu: 250m
+      memory: 1Gi
+    limits:
+      memory: 2Gi
+  persistence:
+    enabled: true
+    size: 10Gi
+    storageClass: local-path
+  config:
+    opensearch.yml: |
+      cluster.name: opensearch-cluster
+      network.host: 0.0.0.0
+      discovery.type: single-node
+      plugins.security.disabled: true
+
+# Disable bundled MySQL and Airflow
+mysql:
+  enabled: false
+
+global:
+  airflow:
+    enabled: false
