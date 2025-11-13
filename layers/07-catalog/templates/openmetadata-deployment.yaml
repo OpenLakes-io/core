@@ -1,0 +1,177 @@
+{{- if .Values.openmetadata.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ include "openlakes-catalog.fullname" . }}-openmetadata
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata
+    component: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openmetadata
+      component: server
+  template:
+    metadata:
+      labels:
+        app: openmetadata
+        component: server
+    spec:
+      initContainers:
+      # Wait for PostgreSQL to be ready
+      - name: wait-for-db
+        image: postgres:15
+        command:
+          - sh
+          - -c
+          - |
+            until pg_isready -h {{ .Values.openmetadata.database.host }} -p {{ .Values.openmetadata.database.port }} -U {{ .Values.openmetadata.database.username }}; do
+              echo "Waiting for PostgreSQL..."
+              sleep 2
+            done
+            echo "PostgreSQL is ready"
+        env:
+          - name: PGPASSWORD
+            value: {{ .Values.openmetadata.database.password | quote }}
+
+      # Wait for OpenSearch/Elasticsearch to be ready
+      {{- if .Values.openmetadata.elasticsearch.enabled }}
+      - name: wait-for-opensearch
+        image: curlimages/curl:8.5.0
+        command:
+          - sh
+          - -c
+          - |
+            until curl -s http://{{ .Values.openmetadata.elasticsearch.host }}:{{ .Values.openmetadata.elasticsearch.port }}/_cluster/health; do
+              echo "Waiting for OpenSearch..."
+              sleep 5
+            done
+            echo "OpenSearch is ready"
+      {{- end }}
+
+      containers:
+      - name: openmetadata
+        image: {{ .Values.openmetadata.image.repository }}:{{ .Values.openmetadata.image.tag }}
+        imagePullPolicy: {{ .Values.openmetadata.image.pullPolicy }}
+        ports:
+          - name: http
+            containerPort: 8585
+            protocol: TCP
+          - name: http-admin
+            containerPort: 8586
+            protocol: TCP
+        env:
+          # Database Configuration
+          - name: DB_DRIVER_CLASS
+            value: {{ .Values.openmetadata.database.driverClass | quote }}
+          - name: DB_SCHEME
+            value: {{ .Values.openmetadata.database.dbScheme | quote }}
+          - name: DB_HOST
+            value: {{ .Values.openmetadata.database.host | quote }}
+          - name: DB_PORT
+            value: {{ .Values.openmetadata.database.port | quote }}
+          - name: DB_USER
+            value: {{ .Values.openmetadata.database.username | quote }}
+          - name: DB_USER_PASSWORD
+            value: {{ .Values.openmetadata.database.password | quote }}
+          - name: OM_DATABASE
+            value: {{ .Values.openmetadata.database.databaseName | quote }}
+          - name: DB_PARAMS
+            value: {{ .Values.openmetadata.database.dbParams | quote }}
+
+          # OpenSearch/Elasticsearch Configuration
+          {{- if .Values.openmetadata.elasticsearch.enabled }}
+          - name: SEARCH_TYPE
+            value: {{ .Values.openmetadata.elasticsearch.searchType | quote }}
+          - name: ELASTICSEARCH_HOST
+            value: {{ .Values.openmetadata.elasticsearch.host | quote }}
+          - name: ELASTICSEARCH_PORT
+            value: {{ .Values.openmetadata.elasticsearch.port | quote }}
+          - name: ELASTICSEARCH_SCHEME
+            value: {{ .Values.openmetadata.elasticsearch.scheme | quote }}
+          {{- end }}
+
+          # Server Configuration
+          - name: SERVER_HOST
+            value: "0.0.0.0"
+          - name: SERVER_PORT
+            value: "8585"
+          - name: SERVER_ADMIN_PORT
+            value: "8586"
+
+          # Authentication Configuration
+          - name: AUTHENTICATION_PROVIDER
+            value: {{ .Values.openmetadata.authentication.provider | quote }}
+          - name: AUTHENTICATION_PUBLIC_KEYS
+            value: '[{{ .Values.openmetadata.authentication.publicKeys | join "," }}]'
+          - name: AUTHENTICATION_ENABLE_SELF_SIGNUP
+            value: {{ .Values.openmetadata.authentication.enableSelfSignup | quote }}
+
+          # Authorizer Configuration
+          - name: AUTHORIZER_CLASS_NAME
+            value: {{ .Values.openmetadata.authorizer.className | quote }}
+          - name: AUTHORIZER_ADMIN_PRINCIPALS
+            value: '[{{ .Values.openmetadata.authorizer.initialAdmins | join "," }}]'
+          - name: AUTHORIZER_PRINCIPAL_DOMAIN
+            value: {{ .Values.openmetadata.authorizer.principalDomain | quote }}
+
+          # Secrets Manager Configuration
+          - name: SECRET_MANAGER
+            value: {{ .Values.openmetadata.secretsManager.provider | quote }}
+
+          # Pipeline Service Client Configuration
+          {{- if .Values.openmetadata.pipelineServiceClient.enabled }}
+          - name: PIPELINE_SERVICE_CLIENT_ENABLED
+            value: "true"
+          - name: PIPELINE_SERVICE_CLIENT_CLASS_NAME
+            value: {{ .Values.openmetadata.pipelineServiceClient.className | quote }}
+          {{- else }}
+          - name: PIPELINE_SERVICE_CLIENT_ENABLED
+            value: "false"
+          - name: PIPELINE_SERVICE_CLIENT_CLASS_NAME
+            value: "org.openmetadata.service.clients.pipeline.noop.NoopClient"
+          {{- end }}
+
+          # Logging
+          - name: LOG_LEVEL
+            value: {{ .Values.openmetadata.logLevel | quote }}
+
+        livenessProbe:
+          httpGet:
+            path: /healthcheck
+            port: http-admin
+          initialDelaySeconds: {{ .Values.openmetadata.livenessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.openmetadata.livenessProbe.periodSeconds }}
+          failureThreshold: {{ .Values.openmetadata.livenessProbe.failureThreshold }}
+
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: http-admin
+          initialDelaySeconds: {{ .Values.openmetadata.readinessProbe.initialDelaySeconds }}
+          periodSeconds: {{ .Values.openmetadata.readinessProbe.periodSeconds }}
+          failureThreshold: {{ .Values.openmetadata.readinessProbe.failureThreshold }}
+
+        startupProbe:
+          httpGet:
+            path: /health
+            port: http-admin
+          periodSeconds: {{ .Values.openmetadata.startupProbe.periodSeconds }}
+          failureThreshold: {{ .Values.openmetadata.startupProbe.failureThreshold }}
+          successThreshold: {{ .Values.openmetadata.startupProbe.successThreshold }}
+
+        resources:
+          {{- toYaml .Values.openmetadata.resources | nindent 10 }}
+
+        volumeMounts:
+          - name: config
+            mountPath: /opt/openmetadata/conf
+
+      volumes:
+        - name: config
+          configMap:
+            name: {{ include "openlakes-catalog.fullname" . }}-openmetadata-config
+{{- end }}

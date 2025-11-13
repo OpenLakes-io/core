@@ -5,39 +5,108 @@ global:
   namespace: openlakes
 
 openmetadata:
-  # OpenMetadata requires deployment via official Helm chart
-  # This layer provides configuration and connector documentation
+  # OpenMetadata is deployed as part of this layer chart
+  # No separate Helm chart installation required
   enabled: true
-
-  # Installation Instructions:
-  # 1. Add OpenMetadata Helm repo:
-  #    helm repo add open-metadata https://helm.open-metadata.org/
-  #    helm repo update
-  #
-  # 2. Create required Kubernetes secrets:
-  #    kubectl create secret generic openmetadata-db-secrets \
-  #      --from-literal=password=openlakes123 \
-  #      -n openlakes
-  #
-  # 3. Install OpenMetadata with custom values:
-  #    helm install openmetadata open-metadata/openmetadata \
-  #      -f openmetadata-values-simple.yaml \
-  #      --namespace openlakes
 
   nodePort: 30585
 
-  # Database Configuration (using existing PostgreSQL)
-  database:
-    host: openlakes-postgres
-    port: 5432
-    databaseName: openmetadata
-    username: openlakes
+  # Image Configuration
+  image:
+    repository: docker.getcollate.io/openmetadata/server
+    tag: "1.6.1"
+    pullPolicy: IfNotPresent
 
-  # Elasticsearch Configuration
+  # Database Configuration (using existing OpenLakes PostgreSQL)
+  database:
+    host: postgres
+    port: 5432
+    databaseName: openmetadata_db
+    username: openlakes
+    password: openlakes123
+    driverClass: org.postgresql.Driver
+    dbScheme: postgresql
+    dbParams: ""
+
+  # OpenSearch/Elasticsearch Configuration (using OpenLakes OpenSearch)
   elasticsearch:
-    # Use bundled Elasticsearch or external
     enabled: true
-    replicas: 1
+    host: opensearch
+    port: 9200
+    scheme: http
+    searchType: opensearch
+    trustStore:
+      enabled: false
+
+  # Pipeline Service Client Configuration
+  pipelineServiceClient:
+    enabled: false
+    className: org.openmetadata.service.clients.pipeline.noop.NoopClient
+    apiEndpoint: ""
+    metadataApiEndpoint: ""
+
+  # Authentication Configuration
+  authentication:
+    provider: basic
+    publicKeys:
+      - "http://openmetadata:8585/api/v1/system/config/jwks"
+    enableSelfSignup: true
+    jwtPrincipalClaims:
+      - email
+      - preferred_username
+      - sub
+
+  # Authorizer Configuration
+  authorizer:
+    className: org.openmetadata.service.security.DefaultAuthorizer
+    containerRequestFilter: org.openmetadata.service.security.JwtFilter
+    initialAdmins:
+      - admin
+    principalDomain: open-metadata.org
+
+  # Secrets Manager Configuration
+  secretsManager:
+    provider: db
+    prefix: ""
+    tags: []
+    additionalParameters: {}
+
+  # Web Configuration
+  web:
+    uriPath: /api
+    hsts:
+      enabled: true
+      maxAge: "365 days"
+      includeSubDomains: "true"
+      preload: "true"
+
+  # Logging
+  logLevel: INFO
+
+  # Resource Limits
+  resources:
+    limits:
+      cpu: 2000m
+      memory: 2Gi
+    requests:
+      cpu: 500m
+      memory: 1Gi
+
+  # Probes Configuration
+  livenessProbe:
+    initialDelaySeconds: 120
+    periodSeconds: 30
+    failureThreshold: 5
+
+  readinessProbe:
+    initialDelaySeconds: 30
+    periodSeconds: 5
+    failureThreshold: 3
+
+  startupProbe:
+    periodSeconds: 60
+    failureThreshold: 5
+    successThreshold: 1
 
   # Automated Service Registration
   automation:
