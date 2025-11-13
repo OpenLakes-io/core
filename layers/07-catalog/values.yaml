@@ -130,18 +130,18 @@ connectors:
     type: Postgres
     serviceType: Database
     config:
-      host: openlakes-postgres
+      host: postgres
       port: 5432
       username: openlakes
       database: postgres
       # Configure via UI or API after deployment
 
   trino:
-    enabled: true
+    enabled: false  # Not deployed yet - deploy Layer 02-compute first
     type: Trino
     serviceType: Database
     config:
-      host: openlakes-trino
+      host: trino
       port: 8080
       username: trino
       catalog: system
@@ -152,32 +152,32 @@ connectors:
     type: Kafka
     serviceType: Messaging
     config:
-      bootstrapServers: openlakes-kafka:9092
+      bootstrapServers: kafka:9092
       schemaRegistryURL: ""  # Optional if using schema registry
 
   # Pipeline Connectors
   airflow:
-    enabled: true
+    enabled: false  # Not deployed yet - deploy Layer 04-orchestration first
     type: Airflow
     serviceType: Pipeline
     config:
-      hostPort: http://openlakes-airflow-webserver:8080
+      hostPort: http://airflow-webserver:8080
       # numberOfStatus: 10  # Number of status to display
 
   flink:
-    enabled: true
+    enabled: false  # Not deployed yet - deploy Layer 03-streaming first
     type: Flink
     serviceType: Pipeline
     config:
-      hostPort: http://openlakes-flink-jobmanager:8081
+      hostPort: http://flink-jobmanager:8081
 
   # Dashboard Connectors
   superset:
-    enabled: true
+    enabled: false  # Not deployed yet - deploy Layer 05-analytics first
     type: Superset
     serviceType: Dashboard
     config:
-      hostPort: http://openlakes-superset:8088
+      hostPort: http://superset:8088
       username: admin
       # password via secret
 
@@ -189,7 +189,7 @@ connectors:
     config:
       awsAccessKeyId: admin
       awsRegion: us-east-1
-      endPointURL: http://openlakes-minio:9000
+      endPointURL: http://minio:9000
       # awsSecretAccessKey via secret
 
 # Service Registration Configuration
@@ -197,7 +197,7 @@ connectors:
 services:
   postgresql:
     enabled: true
-    name: openlakes-postgres
+    name: postgres
     description: OpenLakes PostgreSQL Database - Main operational database
     username: openlakes
     password: openlakes123
@@ -206,8 +206,8 @@ services:
     database: openlakes
 
   trino:
-    enabled: false  # Enable when Trino is deployed
-    name: openlakes-trino
+    enabled: false  # Enable when Trino is deployed (Layer 02-compute)
+    name: trino
     description: OpenLakes Trino - Distributed SQL query engine
     username: trino
     host: trino.openlakes.svc.cluster.local
@@ -215,8 +215,8 @@ services:
     catalog: hive
 
   starrocks:
-    enabled: false  # Enable when StarRocks is deployed
-    name: openlakes-starrocks
+    enabled: false  # Enable when StarRocks is deployed (Layer 02-compute)
+    name: starrocks
     description: OpenLakes StarRocks - High-performance analytical database
     username: root
     host: starrocks-fe.openlakes.svc.cluster.local
@@ -225,7 +225,7 @@ services:
 
   minio:
     enabled: true
-    name: openlakes-minio
+    name: minio
     description: OpenLakes MinIO - S3-compatible object storage
     accessKey: admin
     secretKey: admin123
@@ -234,25 +234,25 @@ services:
 
   kafka:
     enabled: true
-    name: openlakes-kafka
+    name: kafka
     description: OpenLakes Kafka - Event streaming platform
     bootstrapServers: kafka.openlakes.svc.cluster.local:9092
 
   opensearch:
     enabled: true
-    name: openlakes-opensearch
+    name: opensearch
     description: OpenLakes OpenSearch - Search and analytics engine
     endpoint: http://opensearch.openlakes.svc.cluster.local:9200
 
   airflow:
-    enabled: false  # Enable when Airflow is deployed
-    name: openlakes-airflow
+    enabled: false  # Enable when Airflow is deployed (Layer 04-orchestration)
+    name: airflow
     description: OpenLakes Airflow - Workflow orchestration platform
     endpoint: http://airflow-webserver.openlakes.svc.cluster.local:8080
 
   superset:
-    enabled: false  # Enable when Superset is deployed
-    name: openlakes-superset
+    enabled: false  # Enable when Superset is deployed (Layer 05-analytics)
+    name: superset
     description: OpenLakes Superset - Business intelligence platform
     endpoint: http://superset.openlakes.svc.cluster.local:8088
     username: admin
