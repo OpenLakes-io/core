@@ -47,7 +47,7 @@ data:
     import requests
     for i in range(60):
         try:
-            response = requests.get("http://openmetadata:8585/api/v1/health", timeout=5)
+            response = requests.get("http://openmetadata:8586/healthcheck", timeout=5)
             if response.status_code == 200:
                 print("OpenMetadata is ready!")
                 break
@@ -81,7 +81,7 @@ data:
     set -e
 
     echo "Waiting for OpenMetadata to be ready..."
-    until curl -s http://openmetadata:8585/api/v1/health > /dev/null 2>&1; do
+    until curl -s http://openmetadata:8586/healthcheck > /dev/null 2>&1; do
       echo "OpenMetadata not ready yet, waiting..."
       sleep 10
     done
