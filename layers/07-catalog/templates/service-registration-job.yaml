@@ -28,9 +28,8 @@ spec:
           # Install dependencies
           apk add --no-cache curl jq
 
-          # Make script executable and run it
-          chmod +x /scripts/register-services.sh
-          /scripts/register-services.sh
+          # Run the service registration script
+          sh /scripts/register-services.sh
         env:
         - name: OPENMETADATA_HOST
           value: "openmetadata"

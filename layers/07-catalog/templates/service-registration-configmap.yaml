@@ -10,8 +10,9 @@ metadata:
     layer: catalog
 data:
   register-services.sh: |
-    #!/bin/bash
-    set -e
+    #!/bin/sh
+    # Don't use set -e - we want to continue registering other services even if one fails
+    # set -e
 
     # Configuration from environment
     OM_HOST="${OPENMETADATA_HOST:-openmetadata}"
@@ -19,6 +20,10 @@ data:
     ADMIN_USER="${ADMIN_USER:-admin}"
     ADMIN_PASS="${ADMIN_PASSWORD:-admin}"
     NAMESPACE="{{ .Values.global.namespace }}"
+
+    # Track registration status
+    FAILED_SERVICES=""
+    SUCCESS_COUNT=0
 
     # Colors for output
     GREEN='\033[0;32m'
@@ -107,9 +112,11 @@ data:
 
       if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
         print_success "${NAME} registered successfully"
+        SUCCESS_COUNT=$((SUCCESS_COUNT + 1))
       else
         print_error "Failed to register ${NAME} (HTTP ${HTTP_CODE})"
         echo "  Response: $(echo $BODY | jq -r .message 2>/dev/null || echo $BODY)" | head -5
+        FAILED_SERVICES="${FAILED_SERVICES}${NAME} "
       fi
       echo ""
     }
@@ -265,6 +272,14 @@ data:
 
     echo ""
     echo "========================================="
-    print_success "Service Registration Complete!"
+    echo "Service Registration Summary"
+    echo "========================================="
+    echo "Successfully registered: ${SUCCESS_COUNT} service(s)"
+    if [ -n "$FAILED_SERVICES" ]; then
+      echo "Failed to register: ${FAILED_SERVICES}"
+      print_warning "Some services failed to register, but the job will continue"
+    else
+      print_success "All enabled services registered successfully!"
+    fi
     echo "========================================="
 {{- end }}
