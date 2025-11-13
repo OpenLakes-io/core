@@ -29,7 +29,7 @@ spec:
         - |
           echo "Waiting for OpenMetadata to be ready..."
           for i in $(seq 1 60); do
-            if curl -f -s http://openmetadata:8585/api/v1/system/version > /dev/null 2>&1; then
+            if curl -f -s http://openmetadata:8586/healthcheck > /dev/null 2>&1; then
               echo "OpenMetadata is ready!"
               exit 0
             fi

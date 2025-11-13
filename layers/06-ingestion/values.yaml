@@ -5,35 +5,65 @@ global:
   namespace: openlakes
 
 airbyte:
-  # DISABLED: Airbyte requires the official Helm chart (not a simple single-container deployment)
-  #
-  # To install Airbyte, use the official Helm chart:
-  #   helm repo add airbyte https://airbytehq.github.io/helm-charts
-  #   helm install airbyte airbyte/airbyte --namespace openlakes
-  #
-  # See: https://github.com/airbytehq/helm-charts
+  # Airbyte core components deployment
+  # Note: This is a simplified deployment. For production, consider using the official Helm chart
+  # DISABLED due to resource constraints - enable when you have more memory available
   enabled: false
   fullnameOverride: airbyte
   image:
-    repository: airbyte/server
-    tag: "2.0.1"
+    tag: "0.50.42"  # Using stable version instead of 2.0.1
   service:
     nodePort: 30800
   database:
-    host: openlakes-postgres
+    host: postgres
     port: 5432
     name: airbyte
     user: openlakes
     password: openlakes123
-  resources:
-    requests:
-      cpu: 250m
-      memory: 512Mi
-    limits:
-      memory: 1Gi
+  s3:
+    endpoint: http://minio:9000
+    accessKey: admin
+    secretKey: admin123
+
+  # Component resource configurations (reduced for local development)
+  webapp:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 128Mi
+      limits:
+        cpu: 200m
+        memory: 256Mi
+
+  server:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+  worker:
+    resources:
+      requests:
+        cpu: 100m
+        memory: 256Mi
+      limits:
+        cpu: 500m
+        memory: 512Mi
+
+  temporal:
+    resources:
+      requests:
+        cpu: 50m
+        memory: 256Mi
+      limits:
+        cpu: 200m
+        memory: 512Mi
 
 debezium:
-  enabled: true  # Debezium Kafka Connect for Change Data Capture (CDC)
+  enabled: false  # Disable for now due to resource constraints
   fullnameOverride: debezium
   image:
     repository: quay.io/debezium/connect
@@ -41,13 +71,13 @@ debezium:
   replicas: 1
   groupId: "debezium-cluster"
   kafka:
-    host: openlakes-kafka
+    host: kafka
     port: 9092
   service:
     nodePort: 30810
   resources:
     requests:
-      cpu: 250m
-      memory: 768Mi
+      cpu: 100m
+      memory: 512Mi
     limits:
-      memory: 2Gi
+      memory: 1Gi

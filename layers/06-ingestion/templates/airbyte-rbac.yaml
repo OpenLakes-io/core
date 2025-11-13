@@ -1,0 +1,69 @@
+{{- if .Values.airbyte.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.airbyte.fullnameOverride }}-sa
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: airbyte
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.airbyte.fullnameOverride }}-role
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: airbyte
+rules:
+  # Permissions for Airbyte worker to manage jobs as pods
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Permissions for pod logs
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+
+  # Permissions for pod status
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["get", "patch"]
+
+  # Permissions for ConfigMaps (for job configs)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Permissions for Secrets (for credentials)
+  - apiGroups: [""]
+    resources: ["secrets"]
+    verbs: ["get", "list", "create", "update", "patch", "delete"]
+
+  # Permissions for Services
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list"]
+
+  # Permissions for PersistentVolumeClaims
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create", "delete"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.airbyte.fullnameOverride }}-rolebinding
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: airbyte
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.airbyte.fullnameOverride }}-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.airbyte.fullnameOverride }}-sa
+    namespace: {{ .Values.global.namespace }}
+{{- end }}

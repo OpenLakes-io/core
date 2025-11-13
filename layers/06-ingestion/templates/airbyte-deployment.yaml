@@ -1,0 +1,352 @@
+{{- if .Values.airbyte.enabled }}
+---
+# Airbyte Webapp Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.airbyte.fullnameOverride }}-webapp
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: airbyte
+    component: webapp
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airbyte
+      component: webapp
+  template:
+    metadata:
+      labels:
+        app: airbyte
+        component: webapp
+    spec:
+      containers:
+      - name: airbyte-webapp
+        image: airbyte/webapp:{{ .Values.airbyte.image.tag }}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: AIRBYTE_VERSION
+          value: {{ .Values.airbyte.image.tag }}
+        - name: API_URL
+          value: "/api/v1"
+        - name: INTERNAL_API_HOST
+          value: "{{ .Values.airbyte.fullnameOverride }}-server:8001"
+        - name: TRACKING_STRATEGY
+          value: "logging"
+        - name: KEYCLOAK_INTERNAL_HOST
+          value: "localhost"
+        resources:
+          {{- toYaml .Values.airbyte.webapp.resources | nindent 10 }}
+---
+# Airbyte Server Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.airbyte.fullnameOverride }}-server
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: airbyte
+    component: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airbyte
+      component: server
+  template:
+    metadata:
+      labels:
+        app: airbyte
+        component: server
+    spec:
+      initContainers:
+      - name: wait-for-db
+        image: postgres:15-alpine
+        command:
+          - sh
+          - -c
+          - |
+            until pg_isready -h {{ .Values.airbyte.database.host }} -p {{ .Values.airbyte.database.port }} -U {{ .Values.airbyte.database.user }}; do
+              echo "Waiting for PostgreSQL..."
+              sleep 2
+            done
+            echo "PostgreSQL is ready"
+        env:
+          - name: PGPASSWORD
+            value: {{ .Values.airbyte.database.password | quote }}
+      - name: init-db
+        image: airbyte/db:{{ .Values.airbyte.image.tag }}
+        command:
+          - /bin/bash
+          - -c
+          - |
+            echo "Initializing Airbyte database..."
+            # The db container handles initialization automatically
+            echo "Database initialization complete"
+        env:
+        - name: DATABASE_HOST
+          value: {{ .Values.airbyte.database.host }}
+        - name: DATABASE_PORT
+          value: "{{ .Values.airbyte.database.port }}"
+        - name: DATABASE_DB
+          value: {{ .Values.airbyte.database.name }}
+        - name: DATABASE_USER
+          value: {{ .Values.airbyte.database.user }}
+        - name: DATABASE_PASSWORD
+          value: {{ .Values.airbyte.database.password }}
+      containers:
+      - name: airbyte-server
+        image: airbyte/server:{{ .Values.airbyte.image.tag }}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 8001
+          name: http
+        env:
+        - name: AIRBYTE_VERSION
+          value: {{ .Values.airbyte.image.tag }}
+        - name: DATABASE_HOST
+          value: {{ .Values.airbyte.database.host }}
+        - name: DATABASE_PORT
+          value: "{{ .Values.airbyte.database.port }}"
+        - name: DATABASE_DB
+          value: {{ .Values.airbyte.database.name }}
+        - name: DATABASE_USER
+          value: {{ .Values.airbyte.database.user }}
+        - name: DATABASE_PASSWORD
+          value: {{ .Values.airbyte.database.password }}
+        - name: DATABASE_URL
+          value: "jdbc:postgresql://{{ .Values.airbyte.database.host }}:{{ .Values.airbyte.database.port }}/{{ .Values.airbyte.database.name }}"
+        - name: CONFIG_ROOT
+          value: /data
+        - name: WORKSPACE_ROOT
+          value: /tmp/workspace
+        - name: LOCAL_ROOT
+          value: /tmp/airbyte_local
+        - name: TEMPORAL_HOST
+          value: {{ .Values.airbyte.fullnameOverride }}-temporal:7233
+        - name: INTERNAL_API_HOST
+          value: {{ .Values.airbyte.fullnameOverride }}-server:8001
+        - name: WEBAPP_URL
+          value: http://{{ .Values.airbyte.fullnameOverride }}-webapp:8080
+        - name: LOG_LEVEL
+          value: INFO
+        - name: TRACKING_STRATEGY
+          value: logging
+        - name: JOB_MAIN_CONTAINER_CPU_REQUEST
+          value: "250m"
+        - name: JOB_MAIN_CONTAINER_CPU_LIMIT
+          value: "1"
+        - name: JOB_MAIN_CONTAINER_MEMORY_REQUEST
+          value: "256Mi"
+        - name: JOB_MAIN_CONTAINER_MEMORY_LIMIT
+          value: "1Gi"
+        - name: S3_LOG_BUCKET
+          value: "airbyte-logs"
+        - name: S3_LOG_BUCKET_REGION
+          value: "us-east-1"
+        - name: AWS_ACCESS_KEY_ID
+          value: {{ .Values.airbyte.s3.accessKey }}
+        - name: AWS_SECRET_ACCESS_KEY
+          value: {{ .Values.airbyte.s3.secretKey }}
+        - name: S3_MINIO_ENDPOINT
+          value: {{ .Values.airbyte.s3.endpoint }}
+        - name: S3_PATH_STYLE_ACCESS
+          value: "true"
+        - name: STORAGE_TYPE
+          value: "local"
+        resources:
+          {{- toYaml .Values.airbyte.server.resources | nindent 10 }}
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: workspace
+          mountPath: /tmp/workspace
+        livenessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 8001
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /api/v1/health
+            port: 8001
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 10
+          failureThreshold: 3
+      volumes:
+      - name: data
+        emptyDir: {}
+      - name: workspace
+        emptyDir: {}
+---
+# Airbyte Worker Deployment
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.airbyte.fullnameOverride }}-worker
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: airbyte
+    component: worker
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airbyte
+      component: worker
+  template:
+    metadata:
+      labels:
+        app: airbyte
+        component: worker
+    spec:
+      serviceAccountName: {{ .Values.airbyte.fullnameOverride }}-sa
+      containers:
+      - name: airbyte-worker
+        image: airbyte/worker:{{ .Values.airbyte.image.tag }}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 9000
+          name: http
+        env:
+        - name: AIRBYTE_VERSION
+          value: {{ .Values.airbyte.image.tag }}
+        - name: DATABASE_HOST
+          value: {{ .Values.airbyte.database.host }}
+        - name: DATABASE_PORT
+          value: "{{ .Values.airbyte.database.port }}"
+        - name: DATABASE_DB
+          value: {{ .Values.airbyte.database.name }}
+        - name: DATABASE_USER
+          value: {{ .Values.airbyte.database.user }}
+        - name: DATABASE_PASSWORD
+          value: {{ .Values.airbyte.database.password }}
+        - name: DATABASE_URL
+          value: "jdbc:postgresql://{{ .Values.airbyte.database.host }}:{{ .Values.airbyte.database.port }}/{{ .Values.airbyte.database.name }}"
+        - name: CONFIG_ROOT
+          value: /data
+        - name: WORKSPACE_ROOT
+          value: /tmp/workspace
+        - name: LOCAL_ROOT
+          value: /tmp/airbyte_local
+        - name: TEMPORAL_HOST
+          value: {{ .Values.airbyte.fullnameOverride }}-temporal:7233
+        - name: INTERNAL_API_HOST
+          value: {{ .Values.airbyte.fullnameOverride }}-server:8001
+        - name: LOG_LEVEL
+          value: INFO
+        - name: TRACKING_STRATEGY
+          value: logging
+        - name: KUBE_NAMESPACE
+          value: {{ .Values.global.namespace }}
+        - name: SUBMITTER_NUM_THREADS
+          value: "10"
+        - name: JOB_MAIN_CONTAINER_CPU_REQUEST
+          value: "250m"
+        - name: JOB_MAIN_CONTAINER_CPU_LIMIT
+          value: "1"
+        - name: JOB_MAIN_CONTAINER_MEMORY_REQUEST
+          value: "256Mi"
+        - name: JOB_MAIN_CONTAINER_MEMORY_LIMIT
+          value: "1Gi"
+        - name: S3_LOG_BUCKET
+          value: "airbyte-logs"
+        - name: S3_LOG_BUCKET_REGION
+          value: "us-east-1"
+        - name: AWS_ACCESS_KEY_ID
+          value: {{ .Values.airbyte.s3.accessKey }}
+        - name: AWS_SECRET_ACCESS_KEY
+          value: {{ .Values.airbyte.s3.secretKey }}
+        - name: S3_MINIO_ENDPOINT
+          value: {{ .Values.airbyte.s3.endpoint }}
+        - name: S3_PATH_STYLE_ACCESS
+          value: "true"
+        - name: STORAGE_TYPE
+          value: "local"
+        - name: WORKER_ENVIRONMENT
+          value: "kubernetes"
+        - name: CONFIGS_DATABASE_MINIMUM_FLYWAY_MIGRATION_VERSION
+          value: "0.40.0.001"
+        - name: JOBS_DATABASE_MINIMUM_FLYWAY_MIGRATION_VERSION
+          value: "0.40.0.001"
+        resources:
+          {{- toYaml .Values.airbyte.worker.resources | nindent 10 }}
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        - name: workspace
+          mountPath: /tmp/workspace
+      volumes:
+      - name: data
+        emptyDir: {}
+      - name: workspace
+        emptyDir: {}
+---
+# Temporal Deployment for Airbyte workflow orchestration
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.airbyte.fullnameOverride }}-temporal
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: airbyte
+    component: temporal
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: airbyte
+      component: temporal
+  template:
+    metadata:
+      labels:
+        app: airbyte
+        component: temporal
+    spec:
+      containers:
+      - name: airbyte-temporal
+        image: airbyte/temporal:{{ .Values.airbyte.image.tag }}
+        imagePullPolicy: IfNotPresent
+        ports:
+        - containerPort: 7233
+          name: grpc
+        env:
+        - name: DB
+          value: "postgresql"
+        - name: DB_PORT
+          value: "{{ .Values.airbyte.database.port }}"
+        - name: POSTGRES_HOST
+          value: {{ .Values.airbyte.database.host }}
+        - name: POSTGRES_USER
+          value: {{ .Values.airbyte.database.user }}
+        - name: POSTGRES_PWD
+          value: {{ .Values.airbyte.database.password }}
+        - name: POSTGRES_DATABASE
+          value: {{ .Values.airbyte.database.name }}_temporal
+        - name: DYNAMIC_CONFIG_FILE_PATH
+          value: "config/dynamicconfig/development.yaml"
+        resources:
+          {{- toYaml .Values.airbyte.temporal.resources | nindent 10 }}
+        livenessProbe:
+          tcpSocket:
+            port: 7233
+          initialDelaySeconds: 30
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          tcpSocket:
+            port: 7233
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+{{- end }}
