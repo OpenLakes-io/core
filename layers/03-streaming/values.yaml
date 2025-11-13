@@ -14,17 +14,11 @@ flink:
     replicas: 1
     nodePort: 30083
     resources:
-      requests:
-        cpu: 250m
-        memory: 512Mi
       limits:
         memory: 1Gi
   taskmanager:
     replicas: 1
     resources:
-      requests:
-        cpu: 250m
-        memory: 512Mi
       limits:
         memory: 1Gi
   persistence:

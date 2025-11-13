@@ -28,36 +28,24 @@ airbyte:
   # Component resource configurations (reduced for local development)
   webapp:
     resources:
-      requests:
-        cpu: 50m
-        memory: 128Mi
       limits:
         cpu: 200m
         memory: 256Mi
 
   server:
     resources:
-      requests:
-        cpu: 100m
-        memory: 256Mi
       limits:
         cpu: 500m
         memory: 512Mi
 
   worker:
     resources:
-      requests:
-        cpu: 100m
-        memory: 256Mi
       limits:
         cpu: 500m
         memory: 512Mi
 
   temporal:
     resources:
-      requests:
-        cpu: 50m
-        memory: 256Mi
       limits:
         cpu: 200m
         memory: 512Mi
@@ -76,8 +64,5 @@ debezium:
   service:
     nodePort: 30810
   resources:
-    requests:
-      cpu: 100m
-      memory: 512Mi
     limits:
       memory: 1Gi

@@ -15,17 +15,11 @@ airflow:
     nodePort: 30082
     replicas: 1
     resources:
-      requests:
-        cpu: 250m
-        memory: 512Mi
       limits:
         memory: 1Gi
   scheduler:
     replicas: 1
     resources:
-      requests:
-        cpu: 250m
-        memory: 512Mi
       limits:
         memory: 1Gi
   database:

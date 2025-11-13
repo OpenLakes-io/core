@@ -13,9 +13,6 @@ trino:
   coordinator:
     nodePort: 30081
   resources:
-    requests:
-      cpu: 1
-      memory: 2Gi
     limits:
       memory: 4Gi
 
@@ -29,9 +26,6 @@ starrocks:
     replicas: 1
     nodePort: 30930
     resources:
-      requests:
-        cpu: 1
-        memory: 2Gi
       limits:
         memory: 4Gi
     persistence:
@@ -42,9 +36,6 @@ starrocks:
       tag: "3.5-latest"
     replicas: 1
     resources:
-      requests:
-        cpu: 2
-        memory: 4Gi
       limits:
         memory: 8Gi
     persistence:
@@ -66,9 +57,6 @@ spark:
     nodePort: 30077
     daemonMemory: "512m"
     resources:
-      requests:
-        cpu: 500m
-        memory: 1Gi
       limits:
         cpu: 1
         memory: 2Gi
@@ -82,9 +70,6 @@ spark:
     exposeUI: true
     nodePort: 30078
     resources:
-      requests:
-        cpu: 500m
-        memory: 1Gi
       limits:
         cpu: 2
         memory: 3Gi

@@ -23,9 +23,6 @@ postgresql:
   persistence:
     size: 10Gi
   resources:
-    requests:
-      cpu: 500m
-      memory: 512Mi
     limits:
       memory: 1Gi
 
@@ -38,9 +35,6 @@ redis:
   persistence:
     size: 5Gi
   resources:
-    requests:
-      cpu: 250m
-      memory: 256Mi
     limits:
       memory: 512Mi
 
@@ -59,9 +53,6 @@ minio:
     type: NodePort
     nodePort: 30900
   resources:
-    requests:
-      cpu: 500m
-      memory: 512Mi
     limits:
       memory: 1Gi
 
@@ -83,9 +74,6 @@ kafka:
     type: NodePort
     nodePort: 30092
   resources:
-    requests:
-      cpu: 1
-      memory: 1Gi
     limits:
       memory: 2Gi
 
@@ -101,9 +89,6 @@ opensearch:
   storageClass: local-path
   storageSize: 10Gi
   resources:
-    requests:
-      cpu: 500m
-      memory: 1Gi
     limits:
       cpu: 1000m
       memory: 2Gi

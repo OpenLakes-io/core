@@ -19,9 +19,6 @@ superset:
     user: openlakes
     password: openlakes123
   resources:
-    requests:
-      cpu: 500m
-      memory: 1Gi
     limits:
       memory: 2Gi
   auth:
@@ -42,9 +39,6 @@ jupyterhub:
   service:
     nodePort: 30888
   resources:
-    requests:
-      cpu: 500m
-      memory: 1Gi
     limits:
       memory: 2Gi
   persistence:
