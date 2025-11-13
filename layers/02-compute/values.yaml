@@ -49,3 +49,81 @@ starrocks:
         memory: 8Gi
     persistence:
       size: 50Gi
+
+# Apache Spark Configuration
+spark:
+  enabled: true
+  fullnameOverride: spark
+
+  # Image configuration
+  image:
+    repository: apache/spark
+    tag: "4.1.0-preview3"
+    pullPolicy: IfNotPresent
+
+  # Master configuration
+  master:
+    nodePort: 30077
+    daemonMemory: "512m"
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 1
+        memory: 2Gi
+
+  # Worker configuration
+  worker:
+    replicas: 1
+    cores: 1
+    memory: "2g"
+    daemonMemory: "512m"
+    exposeUI: true
+    nodePort: 30078
+    resources:
+      requests:
+        cpu: 500m
+        memory: 1Gi
+      limits:
+        cpu: 2
+        memory: 3Gi
+
+  # Executor configuration for Spark jobs
+  executor:
+    instances: 2
+    memory: "2g"
+    cores: 1
+
+  # Driver configuration for Spark jobs
+  driver:
+    memory: "2g"
+    cores: 1
+
+  # History Server configuration (optional)
+  historyServer:
+    enabled: false
+    eventLogDir: "s3a://spark-history/"
+
+  # Hive Metastore integration (optional)
+  hive:
+    enabled: false
+    metastoreUris: "thrift://hive-metastore:9083"
+
+  # S3/MinIO configuration for data lake access
+  s3:
+    enabled: true
+    endpoint: "http://minio:9000"
+    accessKey: "admin"
+    secretKey: "admin123"
+
+  # Spark logging level (ERROR, WARN, INFO, DEBUG)
+  logLevel: INFO
+
+  # Additional Spark defaults configuration
+  sparkDefaults: {}
+    # spark.sql.shuffle.partitions: "200"
+    # spark.default.parallelism: "100"
+
+  # Additional environment variables
+  environment: {}

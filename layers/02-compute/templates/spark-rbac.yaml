@@ -1,0 +1,72 @@
+{{- if .Values.spark.enabled }}
+---
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.spark.fullnameOverride }}-sa
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    layer: compute
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.spark.fullnameOverride }}-role
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    layer: compute
+rules:
+  # Permissions for Spark driver to create and manage executor pods
+  - apiGroups: [""]
+    resources: ["pods"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete", "deletecollection"]
+
+  # Permissions for pod logs
+  - apiGroups: [""]
+    resources: ["pods/log"]
+    verbs: ["get", "list"]
+
+  # Permissions for pod status
+  - apiGroups: [""]
+    resources: ["pods/status"]
+    verbs: ["get", "patch"]
+
+  # Permissions for ConfigMaps (for dynamic allocation and shuffle service)
+  - apiGroups: [""]
+    resources: ["configmaps"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Permissions for Services (for driver service and shuffle service)
+  - apiGroups: [""]
+    resources: ["services"]
+    verbs: ["get", "list", "watch", "create", "delete"]
+
+  # Permissions for PersistentVolumeClaims (if using persistent storage)
+  - apiGroups: [""]
+    resources: ["persistentvolumeclaims"]
+    verbs: ["get", "list", "create", "delete"]
+
+  # Permissions for Events
+  - apiGroups: [""]
+    resources: ["events"]
+    verbs: ["get", "list", "watch"]
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.spark.fullnameOverride }}-rolebinding
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    layer: compute
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.spark.fullnameOverride }}-role
+subjects:
+  - kind: ServiceAccount
+    name: {{ .Values.spark.fullnameOverride }}-sa
+    namespace: {{ .Values.global.namespace }}
+{{- end }}

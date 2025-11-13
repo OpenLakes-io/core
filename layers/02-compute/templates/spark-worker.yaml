@@ -1,0 +1,123 @@
+{{- if .Values.spark.enabled }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.spark.fullnameOverride }}-worker
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    component: worker
+    layer: compute
+spec:
+  serviceName: {{ .Values.spark.fullnameOverride }}-worker-headless
+  replicas: {{ .Values.spark.worker.replicas }}
+  selector:
+    matchLabels:
+      app: spark
+      component: worker
+  template:
+    metadata:
+      labels:
+        app: spark
+        component: worker
+        layer: compute
+    spec:
+      serviceAccountName: {{ .Values.spark.fullnameOverride }}-sa
+      containers:
+      - name: spark-worker
+        image: {{ .Values.spark.image.repository }}:{{ .Values.spark.image.tag }}
+        imagePullPolicy: {{ .Values.spark.image.pullPolicy }}
+        command:
+          - "/bin/bash"
+          - "-c"
+          - |
+            # Wait for master to be ready
+            for i in {1..30}; do
+              if timeout 2 bash -c "cat < /dev/null > /dev/tcp/{{ .Values.spark.fullnameOverride }}-master/7077" 2>/dev/null; then
+                break
+              fi
+              echo "Waiting for Spark master..."
+              sleep 2
+            done
+            echo "Spark master is ready, starting worker..."
+
+            # Start the worker
+            /opt/spark/sbin/start-worker.sh spark://{{ .Values.spark.fullnameOverride }}-master:7077 \
+              --webui-port 8081 \
+              --cores {{ .Values.spark.worker.cores }} \
+              --memory {{ .Values.spark.worker.memory }}
+
+            # Keep container running
+            tail -f /opt/spark/logs/*
+        ports:
+        - containerPort: 8081
+          name: webui
+          protocol: TCP
+        - containerPort: 7078
+          name: worker
+          protocol: TCP
+        env:
+        - name: SPARK_MODE
+          value: "worker"
+        - name: SPARK_MASTER_URL
+          value: "spark://{{ .Values.spark.fullnameOverride }}-master:7077"
+        - name: SPARK_WORKER_CORES
+          value: "{{ .Values.spark.worker.cores }}"
+        - name: SPARK_WORKER_MEMORY
+          value: "{{ .Values.spark.worker.memory }}"
+        - name: SPARK_WORKER_PORT
+          value: "7078"
+        - name: SPARK_WORKER_WEBUI_PORT
+          value: "8081"
+        - name: SPARK_DAEMON_MEMORY
+          value: {{ .Values.spark.worker.daemonMemory }}
+        - name: SPARK_PUBLIC_DNS
+          valueFrom:
+            fieldRef:
+              fieldPath: status.podIP
+        - name: SPARK_CONF_DIR
+          value: "/opt/spark/conf"
+        - name: SPARK_LOG_DIR
+          value: "/opt/spark/logs"
+        - name: SPARK_WORKER_DIR
+          value: "/opt/spark/work"
+        - name: SPARK_LOG_MAX_FILES
+          value: "5"
+        - name: SPARK_PID_DIR
+          value: "/tmp"
+        resources:
+          {{- toYaml .Values.spark.worker.resources | nindent 10 }}
+        volumeMounts:
+        - name: spark-config
+          mountPath: /opt/spark/conf
+        - name: spark-logs
+          mountPath: /opt/spark/logs
+        - name: spark-work
+          mountPath: /opt/spark/work
+        livenessProbe:
+          exec:
+            command:
+              - /bin/bash
+              - -c
+              - "ps aux | grep -v grep | grep -q org.apache.spark.deploy.worker.Worker"
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          tcpSocket:
+            port: 8081
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      volumes:
+      - name: spark-config
+        configMap:
+          name: {{ .Values.spark.fullnameOverride }}-config
+      - name: spark-logs
+        emptyDir: {}
+      - name: spark-work
+        emptyDir: {}
+{{- end }}

@@ -1,0 +1,98 @@
+{{- if .Values.spark.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.spark.fullnameOverride }}-master
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    component: master
+    layer: compute
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark
+      component: master
+  template:
+    metadata:
+      labels:
+        app: spark
+        component: master
+        layer: compute
+    spec:
+      serviceAccountName: {{ .Values.spark.fullnameOverride }}-sa
+      containers:
+      - name: spark-master
+        image: {{ .Values.spark.image.repository }}:{{ .Values.spark.image.tag }}
+        imagePullPolicy: {{ .Values.spark.image.pullPolicy }}
+        command:
+          - "/bin/bash"
+          - "-c"
+          - |
+            # Start Spark master and keep container running
+            /opt/spark/sbin/start-master.sh
+            tail -f /opt/spark/logs/spark-*-master-*.out
+        ports:
+        - containerPort: 7077
+          name: master
+          protocol: TCP
+        - containerPort: 8080
+          name: webui
+          protocol: TCP
+        - containerPort: 4040
+          name: driver-ui
+          protocol: TCP
+        env:
+        - name: SPARK_MODE
+          value: "master"
+        - name: SPARK_MASTER_HOST
+          value: "0.0.0.0"
+        - name: SPARK_MASTER_PORT
+          value: "7077"
+        - name: SPARK_MASTER_WEBUI_PORT
+          value: "8080"
+        - name: SPARK_DAEMON_MEMORY
+          value: {{ .Values.spark.master.daemonMemory }}
+        - name: SPARK_PUBLIC_DNS
+          value: {{ .Values.spark.fullnameOverride }}-master.{{ .Values.global.namespace }}.svc.cluster.local
+        - name: SPARK_CONF_DIR
+          value: "/opt/spark/conf"
+        - name: SPARK_LOG_DIR
+          value: "/opt/spark/logs"
+        - name: SPARK_LOG_MAX_FILES
+          value: "5"
+        - name: SPARK_PID_DIR
+          value: "/tmp"
+        # Kubernetes-specific configurations
+        - name: SPARK_SUBMIT_OPTS
+          value: "-Dspark.master=spark://{{ .Values.spark.fullnameOverride }}-master:7077"
+        resources:
+          {{- toYaml .Values.spark.master.resources | nindent 10 }}
+        volumeMounts:
+        - name: spark-config
+          mountPath: /opt/spark/conf
+        - name: spark-logs
+          mountPath: /opt/spark/logs
+        livenessProbe:
+          tcpSocket:
+            port: 7077
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          tcpSocket:
+            port: 7077
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 3
+      volumes:
+      - name: spark-config
+        configMap:
+          name: {{ .Values.spark.fullnameOverride }}-config
+      - name: spark-logs
+        emptyDir: {}
+{{- end }}
