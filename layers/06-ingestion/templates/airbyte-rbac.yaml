@@ -8,6 +8,19 @@ metadata:
   labels:
     app: airbyte
 ---
+# ServiceAccount required by Airbyte bootloader hook pod
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: airbyte-admin
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: airbyte
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-10"
+    "helm.sh/hook-delete-policy": before-hook-creation
+---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: Role
 metadata:
@@ -15,6 +28,10 @@ metadata:
   namespace: {{ .Values.global.namespace }}
   labels:
     app: airbyte
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-9"
+    "helm.sh/hook-delete-policy": before-hook-creation
 rules:
   # Permissions for Airbyte worker to manage jobs as pods
   - apiGroups: [""]
@@ -50,6 +67,16 @@ rules:
   - apiGroups: [""]
     resources: ["persistentvolumeclaims"]
     verbs: ["get", "list", "create", "delete"]
+
+  # Permissions for Jobs
+  - apiGroups: ["batch"]
+    resources: ["jobs"]
+    verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+
+  # Permissions for Deployments and ReplicaSets
+  - apiGroups: ["apps"]
+    resources: ["deployments", "replicasets"]
+    verbs: ["get", "list", "watch"]
 ---
 apiVersion: rbac.authorization.k8s.io/v1
 kind: RoleBinding
@@ -58,6 +85,10 @@ metadata:
   namespace: {{ .Values.global.namespace }}
   labels:
     app: airbyte
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-8"
+    "helm.sh/hook-delete-policy": before-hook-creation
 roleRef:
   apiGroup: rbac.authorization.k8s.io
   kind: Role
@@ -65,5 +96,8 @@ roleRef:
 subjects:
   - kind: ServiceAccount
     name: {{ .Values.airbyte.fullnameOverride }}-sa
+    namespace: {{ .Values.global.namespace }}
+  - kind: ServiceAccount
+    name: airbyte-admin
     namespace: {{ .Values.global.namespace }}
 {{- end }}

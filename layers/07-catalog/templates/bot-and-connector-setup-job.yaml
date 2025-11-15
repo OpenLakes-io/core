@@ -1,0 +1,722 @@
+{{- if .Values.openmetadata.enabled }}
+{{- if .Values.openmetadata.automation.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.openmetadata.fullnameOverride }}-bot-and-connector-setup
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata
+    component: bot-setup
+  annotations:
+    app.kubernetes.io/managed-by: helm
+    # Temporarily disabled hooks for testing
+    # "helm.sh/hook": post-install,post-upgrade
+    # "helm.sh/hook-weight": "7"
+    # "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 3
+  activeDeadlineSeconds: 300
+  template:
+    metadata:
+      labels:
+        app: openmetadata
+        component: bot-setup
+    spec:
+      restartPolicy: OnFailure
+      serviceAccountName: openmetadata-bot-sa
+      initContainers:
+      - name: wait-for-openmetadata
+        image: curlimages/curl:8.5.0
+        command:
+        - sh
+        - -c
+        - |
+          echo "Waiting for OpenMetadata to be ready..."
+          for i in $(seq 1 60); do
+            if curl -f -s http://openmetadata-server:8586/healthcheck > /dev/null 2>&1; then
+              echo "OpenMetadata is ready!"
+              exit 0
+            fi
+            echo "Attempt $i/60: OpenMetadata not ready, waiting..."
+            sleep 10
+          done
+          echo "ERROR: OpenMetadata failed to become ready"
+          exit 1
+      containers:
+      - name: setup-bot
+        image: alpine:3.19
+        env:
+        - name: OM_HOST
+          value: "openmetadata-server"
+        - name: OM_PORT
+          value: "8585"
+        - name: ADMIN_USER
+          value: "admin"
+        - name: ADMIN_PASSWORD
+          valueFrom:
+            secretKeyRef:
+              name: openmetadata-admin-secrets
+              key: password
+              optional: true
+        - name: NAMESPACE
+          valueFrom:
+            fieldRef:
+              fieldPath: metadata.namespace
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+
+          # Install dependencies
+          apk add --no-cache curl jq kubectl
+
+          echo "📝 Getting admin JWT token..."
+
+          # Use default admin password if secret not provided
+          ADMIN_PASS=${ADMIN_PASSWORD:-admin}
+
+          # Base64 encode the password as required by OpenMetadata API
+          ADMIN_PASS_B64=$(echo -n "${ADMIN_PASS}" | base64)
+
+          # Get admin JWT token with retry
+          for i in $(seq 1 5); do
+            TOKEN_RESPONSE=$(curl -s -X POST \
+              "http://${OM_HOST}:${OM_PORT}/api/v1/users/login" \
+              -H "Content-Type: application/json" \
+              -d "{
+                \"email\": \"${ADMIN_USER}@open-metadata.org\",
+                \"password\": \"${ADMIN_PASS_B64}\"
+              }")
+
+            ADMIN_TOKEN=$(echo "$TOKEN_RESPONSE" | jq -r '.accessToken // empty')
+
+              if [ -n "$ADMIN_TOKEN" ] && [ "$ADMIN_TOKEN" != "null" ]; then
+                echo "✅ Got admin token successfully"
+                break
+              fi
+
+              echo "⏳ Attempt $i/5: Failed to get token, retrying..."
+              echo "$TOKEN_RESPONSE"
+              sleep 5
+            done
+
+            if [ -z "$ADMIN_TOKEN" ] || [ "$ADMIN_TOKEN" = "null" ]; then
+              echo "❌ Failed to get admin token after 5 attempts"
+              echo "Response: $TOKEN_RESPONSE"
+              exit 1
+            fi
+
+            # Step 2: Check if user for bot already exists
+            echo "🧑 Step 2: Checking if bot user already exists..."
+
+            EXISTING_USER=$(curl -s -X GET \
+              "http://${OM_HOST}:${OM_PORT}/api/v1/users/name/OpenLakesBot" \
+              -H "Authorization: Bearer ${ADMIN_TOKEN}")
+
+            USER_ID=$(echo "$EXISTING_USER" | jq -r '.id // empty')
+
+            if [ -n "$USER_ID" ] && [ "$USER_ID" != "null" ]; then
+              echo "  ✅ Found existing bot user with ID: ${USER_ID:0:8}..."
+            else
+              # Bot user doesn't exist, create it
+              echo "  📝 Bot user not found, creating new bot user..."
+
+              # Create bot user using the /v1/users endpoint
+              USER_RESPONSE=$(curl -s -X PUT \
+                "http://${OM_HOST}:${OM_PORT}/api/v1/users" \
+                -H "Content-Type: application/json" \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+                -d '{
+                  "description": "OpenLakes Bot for Automating OpenLakes tasks",
+                  "name": "OpenLakesBot",
+                  "displayName": "OpenLakes Bot",
+                  "email": "openlakes-bot@openlakes.io",
+                  "isAdmin": true,
+                  "domains": [],
+                  "isBot": true,
+                  "authenticationMechanism": {
+                    "authType": "JWT",
+                    "config": {
+                      "JWTTokenExpiry": "Unlimited"
+                    }
+                  },
+                  "botName": "OpenLakesBot"
+                }')
+
+              echo "  User creation response: $USER_RESPONSE"
+
+              USER_ID=$(echo "$USER_RESPONSE" | jq -r '.id // empty')
+
+              if [ -z "$USER_ID" ] || [ "$USER_ID" = "null" ]; then
+                echo "  ❌ Failed to create bot user"
+                echo "  Response: $USER_RESPONSE"
+                exit 1
+              fi
+
+              echo "  ✅ Created bot user with ID: ${USER_ID:0:8}..."
+            fi
+
+            # Step 3: Check if bot already exists
+            echo "🤖 Step 3: Checking if bot already exists..."
+
+            EXISTING_BOT=$(curl -s -X GET \
+              "http://${OM_HOST}:${OM_PORT}/api/v1/bots/name/OpenLakesBot" \
+              -H "Authorization: Bearer ${ADMIN_TOKEN}")
+
+            BOT_USER_ID=$(echo "$EXISTING_BOT" | jq -r '.botUser.id // empty')
+
+            if [ -n "$BOT_USER_ID" ] && [ "$BOT_USER_ID" != "null" ]; then
+              echo "  ✅ Found existing bot with user ID: ${BOT_USER_ID:0:8}..."
+            else
+              # Bot doesn't exist, create it
+              echo "  📝 Bot not found, creating new bot..."
+
+              # Create bot using the /v1/bots endpoint
+              # botUser = bot username (must match user name created above)
+              BOT_RESPONSE=$(curl -s -X PUT \
+                "http://${OM_HOST}:${OM_PORT}/api/v1/bots" \
+                -H "Content-Type: application/json" \
+                -H "Authorization: Bearer ${ADMIN_TOKEN}" \
+                -d '{
+                  "name": "OpenLakesBot",
+                  "botUser": "OpenLakesBot",
+                  "description": "Bot for automated service registration and metadata ingestion"
+                }')
+
+              echo "  Bot creation response: $BOT_RESPONSE"
+
+              # Extract bot user ID from the botUser field in the response
+              BOT_USER_ID=$(echo "$BOT_RESPONSE" | jq -r '.botUser.id // empty')
+
+              if [ -z "$BOT_USER_ID" ] || [ "$BOT_USER_ID" = "null" ]; then
+                echo "  ❌ Failed to create bot"
+                echo "  Response: $BOT_RESPONSE"
+                exit 1
+              fi
+
+              echo "  ✅ Created bot with user ID: ${BOT_USER_ID:0:8}..."
+            fi
+
+            echo "  ✅ Bot user ID: ${BOT_USER_ID:0:8}..."
+
+            # Step 4: GET the authentication mechanism to retrieve the JWT token
+            echo "  🔑 Retrieving JWT token from auth mechanism..."
+            AUTH_MECHANISM_RESPONSE=$(curl -s -X GET \
+              "http://${OM_HOST}:${OM_PORT}/api/v1/users/auth-mechanism/${BOT_USER_ID}" \
+              -H "Authorization: Bearer ${ADMIN_TOKEN}")
+
+            BOT_TOKEN=$(echo "$AUTH_MECHANISM_RESPONSE" | jq -r '.config.JWTToken // empty')
+
+            if [ -z "$BOT_TOKEN" ] || [ "$BOT_TOKEN" = "null" ] || [ "$BOT_TOKEN" = "" ]; then
+              echo "  ❌ Failed to retrieve bot token from auth mechanism"
+              echo "  Response: $AUTH_MECHANISM_RESPONSE"
+              exit 1
+            fi
+
+            echo "  ✅ Retrieved bot JWT token"
+
+
+            echo "✅ Bot setup complete. Token (first 20 chars): ${BOT_TOKEN:0:20}..."
+
+            # Test the JWT token against the API
+            echo ""
+            echo "🔐 Step 5: Testing JWT token authentication..."
+            echo "================================================"
+
+            # Test 1: Get current user (bot) info
+            echo "📋 Test 5.1: Retrieving bot user information..."
+            BOT_USER_RESPONSE=$(curl -s -X GET \
+              "http://${OM_HOST}:${OM_PORT}/api/v1/users/name/OpenLakesBot" \
+              -H "Authorization: Bearer ${BOT_TOKEN}")
+
+            BOT_USER_NAME=$(echo "$BOT_USER_RESPONSE" | jq -r '.name // empty')
+            if [ "$BOT_USER_NAME" = "openlakesbot" ]; then
+              echo "  ✅ Successfully authenticated as bot user"
+              echo "  - Name: $(echo "$BOT_USER_RESPONSE" | jq -r '.displayName')"
+              echo "  - Email: $(echo "$BOT_USER_RESPONSE" | jq -r '.email')"
+              echo "  - Is Bot: $(echo "$BOT_USER_RESPONSE" | jq -r '.isBot')"
+              echo "  - Is Admin: $(echo "$BOT_USER_RESPONSE" | jq -r '.isAdmin')"
+            else
+              echo "  ❌ Failed to retrieve bot user info"
+              echo "  Response: $BOT_USER_RESPONSE"
+            fi
+
+            # Test 2: List databases (requires read permissions)
+            echo ""
+            echo "📋 Test 5.2: Listing database services..."
+            DATABASES_RESPONSE=$(curl -s -X GET \
+              "http://${OM_HOST}:${OM_PORT}/api/v1/services/databaseServices?limit=5" \
+              -H "Authorization: Bearer ${BOT_TOKEN}")
+
+            DB_COUNT=$(echo "$DATABASES_RESPONSE" | jq -r '.paging.total // 0')
+            if [ "$DB_COUNT" -ge 0 ]; then
+              echo "  ✅ Successfully retrieved database services (count: $DB_COUNT)"
+              echo "$DATABASES_RESPONSE" | jq -r '.data[]?.name // empty' | while read -r db; do
+                [ -n "$db" ] && echo "  - $db"
+              done
+            else
+              echo "  ❌ Failed to list database services"
+              echo "  Response: $DATABASES_RESPONSE"
+            fi
+
+            # Test 3: Create a test tag (requires write permissions)
+            echo ""
+            echo "📋 Test 5.3: Testing write permissions (create tag category)..."
+            TEST_TAG_NAME="botTestTag"
+            TAG_RESPONSE=$(curl -s -X POST \
+              "http://${OM_HOST}:${OM_PORT}/api/v1/tags" \
+              -H "Content-Type: application/json" \
+              -H "Authorization: Bearer ${BOT_TOKEN}" \
+              -d "{
+                \"name\": \"${TEST_TAG_NAME}\",
+                \"displayName\": \"Bot Test Tag\",
+                \"description\": \"Test tag created by bot to verify JWT permissions\"
+              }")
+
+            TAG_ID=$(echo "$TAG_RESPONSE" | jq -r '.id // empty')
+            if [ -n "$TAG_ID" ] && [ "$TAG_ID" != "null" ]; then
+              echo "  ✅ Successfully created test tag (id: ${TAG_ID:0:8}...)"
+
+              # Clean up test tag
+              echo "  🗑️  Cleaning up test tag..."
+              DELETE_RESPONSE=$(curl -s -X DELETE \
+                "http://${OM_HOST}:${OM_PORT}/api/v1/tags/${TAG_ID}?hardDelete=true" \
+                -H "Authorization: Bearer ${BOT_TOKEN}")
+              echo "  ✅ Test tag cleaned up"
+            else
+              echo "  ⚠️  Could not create test tag (might need admin permissions)"
+              echo "  Response: $(echo "$TAG_RESPONSE" | jq -r '.message // .error // "Unknown error"')"
+            fi
+
+            # Test 4: Verify API health with authentication
+            echo ""
+            echo "📋 Test 5.4: Testing authenticated health endpoint..."
+            HEALTH_RESPONSE=$(curl -s -X GET \
+              "http://${OM_HOST}:${OM_PORT}/api/v1/system/config/auth" \
+              -H "Authorization: Bearer ${BOT_TOKEN}")
+
+            AUTH_PROVIDER=$(echo "$HEALTH_RESPONSE" | jq -r '.provider // empty')
+            if [ -n "$AUTH_PROVIDER" ]; then
+              echo "  ✅ Successfully accessed system config"
+              echo "  - Auth Provider: $AUTH_PROVIDER"
+              echo "  - Public Keys URL: $(echo "$HEALTH_RESPONSE" | jq -r '.publicKeyUrls[0] // "N/A"')"
+            else
+              echo "  ❌ Failed to access system config"
+            fi
+
+            # Test 5: Validate JWT expiry
+            echo ""
+            echo "📋 Test 5.5: Checking JWT token expiry..."
+            # Decode JWT payload (base64 decode the middle part)
+            set +e  # Temporarily disable exit on error
+            JWT_PAYLOAD=$(echo "${BOT_TOKEN}" | cut -d'.' -f2 | base64 -d 2>/dev/null || echo "{}")
+            EXP_TIME=$(echo "$JWT_PAYLOAD" | jq -r '.exp // empty' 2>/dev/null || echo "")
+            set -e  # Re-enable exit on error
+
+            if [ -n "$EXP_TIME" ] && [ "$EXP_TIME" != "null" ]; then
+              CURRENT_TIME=$(date +%s)
+              if [ "$EXP_TIME" -gt "$CURRENT_TIME" ] 2>/dev/null; then
+                TIME_REMAINING=$((EXP_TIME - CURRENT_TIME))
+                echo "  ✅ Token is valid for $(($TIME_REMAINING / 86400)) days"
+              else
+                echo "  ⚠️  Token appears to be expired"
+              fi
+            else
+              echo "  ✅ Token has unlimited expiry (as configured)"
+            fi
+
+            echo ""
+            echo "================================================"
+            echo "🎉 JWT Token Verification Complete!"
+            echo ""
+
+
+          # Store token in Kubernetes secret
+          echo "💾 Step 6: Storing bot token in Kubernetes secret..."
+          kubectl create secret generic openmetadata-bot-token \
+            --from-literal=token="${BOT_TOKEN}" \
+            --namespace="${NAMESPACE}" \
+            --dry-run=client -o yaml | kubectl apply -f -
+
+          echo "✅ Bot setup completed successfully!"
+
+          # Use bot token for authentication
+          echo "Using bot token for authentication..."
+          if [ -z "$BOT_TOKEN" ]; then
+          echo "ERROR: BOT_TOKEN environment variable not set"
+          exit 1
+          fi
+
+          AUTH_HEADER="Authorization: Bearer $BOT_TOKEN"
+          echo "Bot token configured successfully"
+
+          # Verify token is accepted by OpenMetadata before proceeding
+          echo "Verifying bot token authentication..."
+          MAX_TOKEN_RETRIES=3
+          TOKEN_RETRY_COUNT=0
+          while [ $TOKEN_RETRY_COUNT -lt $MAX_TOKEN_RETRIES ]; do
+          VERIFY_RESPONSE=$(curl -s -w "\n
+          %{http_code}" -H "$AUTH_HEADER" "http://openmetadata-server:8585/api/v1/services/databaseServices")
+          VERIFY_HTTP_CODE=$(echo "$VERIFY_RESPONSE" | tail -n1)
+
+          if [ "$VERIFY_HTTP_CODE" = "200" ]; then
+          echo "✓ Bot token verified successfully!"
+          break
+          elif [ "$VERIFY_HTTP_CODE" = "401" ]; then
+          TOKEN_RETRY_COUNT=$((TOKEN_RETRY_COUNT + 1))
+          echo "  Attempt $TOKEN_RETRY_COUNT/$MAX_TOKEN_RETRIES: Token not yet active (HTTP 401), waiting 10s..."
+          sleep 10
+          else
+          echo "  Unexpected response code: $VERIFY_HTTP_CODE"
+          TOKEN_RETRY_COUNT=$((TOKEN_RETRY_COUNT + 1))
+          sleep 10
+          fi
+          done
+
+          if [ $TOKEN_RETRY_COUNT -eq $MAX_TOKEN_RETRIES ]; then
+          echo "❌ ERROR: Bot token failed to become active after 2 minutes"
+          echo "This indicates an OpenMetadata JWT synchronization issue"
+          exit 1
+          fi
+
+          echo "Setting up connectors..."
+
+          # Function to create service
+          create_service() {
+          local service_name=$1
+          local service_json=$2
+
+          echo "Creating $service_name..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://openmetadata-server:8585/api/v1/services/databaseServices" \
+          -H "$AUTH_HEADER" \
+          -H "Content-Type: application/json" \
+          -d "$service_json")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+          echo "  ✓ $service_name created successfully"
+          elif [ "$HTTP_CODE" = "409" ]; then
+          echo "  ✓ $service_name already exists"
+          else
+          echo "  ✗ Failed to create $service_name (HTTP $HTTP_CODE)"
+          echo "  Response: $BODY"
+          fi
+          }
+
+          create_messaging_service() {
+          local service_name=$1
+          local service_json=$2
+
+          echo "Creating $service_name..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://openmetadata-server:8585/api/v1/services/messagingServices" \
+          -H "$AUTH_HEADER" \
+          -H "Content-Type: application/json" \
+          -d "$service_json")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "  ✓ $service_name created successfully"
+          elif [ "$HTTP_CODE" = "409" ]; then
+            echo "  ✓ $service_name already exists"
+          else
+            echo "  ✗ Failed to create $service_name (HTTP $HTTP_CODE)"
+            echo "  Response: $BODY"
+          fi
+          }
+
+          create_pipeline_service() {
+          local service_name=$1
+          local service_json=$2
+
+          echo "Creating $service_name..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://openmetadata-server:8585/api/v1/services/pipelineServices" \
+          -H "$AUTH_HEADER" \
+          -H "Content-Type: application/json" \
+          -d "$service_json")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "  ✓ $service_name created successfully"
+          elif [ "$HTTP_CODE" = "409" ]; then
+            echo "  ✓ $service_name already exists"
+          else
+            echo "  ✗ Failed to create $service_name (HTTP $HTTP_CODE)"
+            echo "  Response: $BODY"
+          fi
+          }
+
+          create_dashboard_service() {
+          local service_name=$1
+          local service_json=$2
+
+          echo "Creating $service_name..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://openmetadata-server:8585/api/v1/services/dashboardServices" \
+          -H "$AUTH_HEADER" \
+          -H "Content-Type: application/json" \
+          -d "$service_json")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "  ✓ $service_name created successfully"
+          elif [ "$HTTP_CODE" = "409" ]; then
+            echo "  ✓ $service_name already exists"
+          else
+            echo "  ✗ Failed to create $service_name (HTTP $HTTP_CODE)"
+            echo "  Response: $BODY"
+          fi
+          }
+
+          create_storage_service() {
+          local service_name=$1
+          local service_json=$2
+
+          echo "Creating $service_name..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://openmetadata-server:8585/api/v1/services/storageServices" \
+          -H "$AUTH_HEADER" \
+          -H "Content-Type: application/json" \
+          -d "$service_json")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "  ✓ $service_name created successfully"
+          elif [ "$HTTP_CODE" = "409" ]; then
+            echo "  ✓ $service_name already exists"
+          else
+            echo "  ✗ Failed to create $service_name (HTTP $HTTP_CODE)"
+            echo "  Response: $BODY"
+          fi
+          }
+
+          create_search_service() {
+          local service_name=$1
+          local service_json=$2
+
+          echo "Creating $service_name..."
+          RESPONSE=$(curl -s -w "\n%{http_code}" -X POST "http://openmetadata-server:8585/api/v1/services/searchServices" \
+          -H "$AUTH_HEADER" \
+          -H "Content-Type: application/json" \
+          -d "$service_json")
+
+          HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+          BODY=$(echo "$RESPONSE" | sed '$d')
+
+          if [ "$HTTP_CODE" = "201" ] || [ "$HTTP_CODE" = "200" ]; then
+            echo "  ✓ $service_name created successfully"
+          elif [ "$HTTP_CODE" = "409" ]; then
+            echo "  ✓ $service_name already exists"
+          else
+            echo "  ✗ Failed to create $service_name (HTTP $HTTP_CODE)"
+            echo "  Response: $BODY"
+          fi
+          }
+
+          # PostgreSQL
+          create_service "PostgreSQL" '{
+            "name": "openlakes-postgres",
+            "serviceType": "Postgres",
+            "description": "OpenLakes PostgreSQL Database",
+            "connection": {
+              "config": {
+                "type": "Postgres",
+                "username": "openlakes",
+                "authType": {"password": "'"$POSTGRES_PASSWORD"'"},
+                "hostPort": "postgres:5432",
+                "database": "postgres"
+              }
+            }
+          }'
+
+          # Trino
+          create_service "Trino" '{
+            "name": "openlakes-trino",
+            "serviceType": "Trino",
+            "description": "OpenLakes Trino Query Engine",
+            "connection": {
+            "config": {
+              "type": "Trino",
+              "username": "trino",
+              "hostPort": "trino:8080",
+              "catalog": "system"
+            }
+          }
+          }'
+
+          # Kafka
+          create_messaging_service "Kafka" '{
+            "name": "openlakes-kafka",
+            "serviceType": "Kafka",
+            "description": "OpenLakes Kafka Messaging",
+            "connection": {
+            "config": {
+              "type": "Kafka",
+              "bootstrapServers": "kafka:9092"
+            }
+          }
+          }'
+
+          # Airflow (OpenMetadata Ingestion)
+          create_pipeline_service "Airflow" '{
+            "name": "ingestion-airflow",
+            "serviceType": "Airflow",
+            "description": "OpenMetadata Ingestion Airflow Service",
+            "connection": {
+            "config": {
+              "type": "Airflow",
+              "hostPort": "http://openmetadata-ingestion:8080",
+              "connection": {
+                "type": "Backend"
+              }
+            }
+          }
+          }'
+
+          # Flink
+          create_pipeline_service "Flink" '{
+            "name": "openlakes-flink",
+            "serviceType": "Flink",
+            "description": "OpenLakes Flink Stream Processing",
+            "connection": {
+            "config": {
+              "type": "Flink",
+              "hostPort": "http://flink-jobmanager:8081"
+            }
+          }
+          }'
+
+          # Superset
+          create_dashboard_service "Superset" '{
+            "name": "openlakes-superset",
+            "serviceType": "Superset",
+            "description": "OpenLakes Superset Dashboards",
+            "connection": {
+            "config": {
+              "type": "Superset",
+              "hostPort": "http://superset:8088",
+              "connection": {
+                "provider": "db",
+                "username": "admin",
+                "password": "'"$SUPERSET_PASSWORD"'"
+              }
+            }
+          }
+          }'
+
+          # MinIO
+          create_storage_service "MinIO" '{
+            "name": "openlakes-minio",
+            "serviceType": "S3",
+            "description": "OpenLakes MinIO Object Storage",
+            "connection": {
+            "config": {
+              "type": "S3",
+              "awsConfig": {
+                "awsAccessKeyId": "'"$MINIO_ACCESS_KEY"'",
+                "awsSecretAccessKey": "'"$MINIO_SECRET_KEY"'",
+                "awsRegion": "us-east-1",
+                "endPointURL": "http://minio:9000"
+              }
+            }
+          }
+          }'
+
+          # Redis - Skip (not supported as database service type in OpenMetadata)
+          # create_service "Redis" '{
+          #   "name": "openlakes-redis",
+          #   "serviceType": "Redis",
+          #   "description": "OpenLakes Redis Cache",
+          #   "connection": {
+          #   "config": {
+          #     "type": "Redis",
+          #     "hostPort": "redis:6379",
+          #     "databaseIndex": 0
+          #   }
+          # }
+          # }'
+
+          # OpenSearch
+          create_search_service "OpenSearch" '{
+            "name": "openlakes-opensearch",
+            "serviceType": "OpenSearch",
+            "description": "OpenLakes OpenSearch Service",
+            "connection": {
+            "config": {
+              "type": "OpenSearch",
+              "hostPort": "opensearch:9200"
+            }
+          }
+          }'
+
+          # Spark
+          create_pipeline_service "Spark" '{
+            "name": "openlakes-spark",
+            "serviceType": "Spark",
+            "description": "OpenLakes Spark Processing",
+            "connection": {
+            "config": {
+              "type": "Spark",
+              "hostPort": "spark://spark-master:7077"
+            }
+          }
+          }'
+
+          # StarRocks
+          create_service "StarRocks" '{
+            "name": "openlakes-starrocks",
+            "serviceType": "Mysql",
+            "description": "OpenLakes StarRocks Analytics Database",
+            "connection": {
+            "config": {
+              "type": "Mysql",
+              "username": "root",
+              "authType": {"password": ""},
+              "hostPort": "starrocks-fe-external:9030",
+              "databaseSchema": "information_schema"
+            }
+          }
+          }'
+
+          # Airbyte
+          create_pipeline_service "Airbyte" '{
+            "name": "openlakes-airbyte",
+            "serviceType": "Airbyte",
+            "description": "OpenLakes Airbyte Data Integration",
+            "connection": {
+            "config": {
+              "type": "Airbyte",
+              "hostPort": "http://openlakes-ingestion-airbyte-server-svc:8001"
+            }
+          }
+          }'
+
+          # Debezium
+          create_messaging_service "Debezium" '{
+            "name": "openlakes-debezium",
+            "serviceType": "Kafka",
+            "description": "OpenLakes Debezium CDC",
+            "connection": {
+            "config": {
+              "type": "Kafka",
+              "bootstrapServers": "kafka:9092",
+              "schemaRegistryURL": "http://debezium:8083"
+            }
+          }
+          }'
+
+          echo "Connector setup completed!"
+          echo "You can now visit OpenMetadata UI to see all connected services."
+{{- end }}
+{{- end }}

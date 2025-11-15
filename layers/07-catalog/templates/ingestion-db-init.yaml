@@ -1,0 +1,57 @@
+{{- if .Values.ingestion.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: 07-catalog-ingestion-db-init
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: ingestion
+    component: db-init
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: ingestion
+        component: db-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: db-init
+        image: postgres:16
+        env:
+        - name: PGHOST
+          value: {{ .Values.ingestion.database.host }}
+        - name: PGPORT
+          value: {{ .Values.ingestion.database.port | quote }}
+        - name: PGUSER
+          value: {{ .Values.ingestion.database.user }}
+        - name: PGPASSWORD
+          value: {{ .Values.ingestion.database.password }}
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          echo "Waiting for PostgreSQL to be ready..."
+          until pg_isready -h ${PGHOST} -p ${PGPORT} -U ${PGUSER}; do
+            echo "PostgreSQL not ready, waiting..."
+            sleep 5
+          done
+          echo "PostgreSQL is ready!"
+
+          echo "Checking if database '{{ .Values.ingestion.database.name }}' exists..."
+          if psql -U ${PGUSER} -d postgres -lqt | cut -d \| -f 1 | grep -qw {{ .Values.ingestion.database.name }}; then
+            echo "Database '{{ .Values.ingestion.database.name }}' already exists."
+          else
+            echo "Creating database '{{ .Values.ingestion.database.name }}'..."
+            psql -U ${PGUSER} -d postgres -c "CREATE DATABASE {{ .Values.ingestion.database.name }} OWNER {{ .Values.ingestion.database.user }};"
+            echo "Database '{{ .Values.ingestion.database.name }}' created successfully!"
+          fi
+{{- end }}

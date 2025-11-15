@@ -1,6 +1,12 @@
 apiVersion: v2
-name: openlakes-ingestion
+name: 06-ingestion
 version: 1.0.0
 description: OpenLakes ingestion layer - data connectors and CDC
 type: application
 appVersion: "1.0.0"
+
+dependencies:
+  - name: airbyte
+    version: "1.9.1"
+    repository: "https://airbytehq.github.io/helm-charts"
+    condition: airbyte.enabled

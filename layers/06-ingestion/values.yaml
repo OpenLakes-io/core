@@ -5,57 +5,105 @@ global:
   namespace: openlakes
 
 airbyte:
-  # Airbyte core components deployment
-  # Note: This is a simplified deployment. For production, consider using the official Helm chart
-  # DISABLED due to resource constraints - enable when you have more memory available
-  enabled: false
-  fullnameOverride: airbyte
-  image:
-    tag: "0.50.42"  # Using stable version instead of 2.0.1
-  service:
-    nodePort: 30800
-  database:
-    host: postgres
-    port: 5432
-    name: airbyte
-    user: openlakes
-    password: openlakes123
-  s3:
-    endpoint: http://minio:9000
-    accessKey: admin
-    secretKey: admin123
+  # Airbyte Official Helm Chart (v2.x) - integrated as subchart dependency
+  enabled: true
+  fullnameOverride: 06-ingestion-airbyte
+  # Override subchart service names to be simple
+  nameOverride: airbyte
 
-  # Component resource configurations (reduced for local development)
-  webapp:
-    resources:
-      limits:
-        cpu: 200m
-        memory: 256Mi
+  # Service Account configuration (RBAC defined in templates/airbyte-rbac.yaml)
+  serviceAccount:
+    create: false
+    name: airbyte-sa
 
+  # Use existing PostgreSQL
+  global:
+    database:
+      type: external
+      host: postgres
+      port: 5432
+      database: airbyte
+      user: openlakes
+      password: openlakes123
+      jdbcUrl: "jdbc:postgresql://postgres:5432/airbyte?sslmode=disable"
+
+    storage:
+      type: minio
+      minio:
+        enabled: false
+        endpoint: http://minio:9000
+        accessKeyId: admin
+        secretAccessKey: admin123
+      bucket:
+        log: airbyte-logs
+        state: airbyte-state
+        workloadOutput: airbyte-output
+
+    edition: community
+
+  # Disable internal PostgreSQL
+  postgresql:
+    enabled: false
+
+  # Resource limits for local development
   server:
     resources:
       limits:
-        cpu: 500m
-        memory: 512Mi
+        cpu: 1000m
+        memory: 1Gi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+
+  # Webapp is not available as a separate component in Airbyte 2.x
+  # The UI is served by the server component
+  webapp:
+    enabled: false
 
   worker:
     resources:
       limits:
-        cpu: 500m
-        memory: 512Mi
+        cpu: 1000m
+        memory: 1Gi
+      requests:
+        cpu: 100m
+        memory: 256Mi
 
   temporal:
+    enabled: true
     resources:
       limits:
-        cpu: 200m
+        cpu: 500m
         memory: 512Mi
+      requests:
+        cpu: 100m
+        memory: 256Mi
+    extraEnv:
+      - name: POSTGRES_TLS_ENABLED
+        value: "false"
+      - name: SQL_TLS_ENABLED
+        value: "false"
+      - name: DBNAME
+        value: "temporal"
+      - name: VISIBILITY_DBNAME
+        value: "temporal_visibility"
+
+  # Environment
+  env_vars:
+    TRACKING_STRATEGY: logging
+
+  # Bootloader configuration (disable remote connector registry for offline/local deployment)
+  airbyte-bootloader:
+    env_vars:
+      AUTO_UPGRADE_CONNECTORS: "false"
+      APPLY_DEFINITIONS_ON_START: "false"
 
 debezium:
-  enabled: false  # Disable for now due to resource constraints
+  enabled: true
   fullnameOverride: debezium
   image:
-    repository: quay.io/debezium/connect
-    tag: "3.3"
+    repository: debezium/connect
+    tag: "3.0.0.Final"
   replicas: 1
   groupId: "debezium-cluster"
   kafka:
@@ -65,4 +113,4 @@ debezium:
     nodePort: 30810
   resources:
     limits:
-      memory: 1Gi
+      memory: 2Gi

@@ -1,0 +1,57 @@
+{{- if .Values.airbyte.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: 06-ingestion-airbyte-db-init
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: airbyte
+    component: db-init
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-15"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: airbyte
+        component: db-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: db-init
+        image: postgres:16
+        env:
+        - name: PGHOST
+          value: {{ .Values.airbyte.global.database.host }}
+        - name: PGPORT
+          value: {{ .Values.airbyte.global.database.port | quote }}
+        - name: PGUSER
+          value: {{ .Values.airbyte.global.database.user }}
+        - name: PGPASSWORD
+          value: {{ .Values.airbyte.global.database.password }}
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          echo "Waiting for PostgreSQL to be ready..."
+          until pg_isready -h ${PGHOST} -p ${PGPORT} -U ${PGUSER}; do
+            echo "PostgreSQL not ready, waiting..."
+            sleep 5
+          done
+          echo "PostgreSQL is ready!"
+
+          echo "Checking if database '{{ .Values.airbyte.global.database.database }}' exists..."
+          if psql -U ${PGUSER} -d postgres -lqt | cut -d \| -f 1 | grep -qw {{ .Values.airbyte.global.database.database }}; then
+            echo "Database '{{ .Values.airbyte.global.database.database }}' already exists."
+          else
+            echo "Creating database '{{ .Values.airbyte.global.database.database }}'..."
+            psql -U ${PGUSER} -d postgres -c "CREATE DATABASE {{ .Values.airbyte.global.database.database }} OWNER {{ .Values.airbyte.global.database.user }};"
+            echo "Database '{{ .Values.airbyte.global.database.database }}' created successfully!"
+          fi
+{{- end }}

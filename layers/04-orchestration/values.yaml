@@ -5,8 +5,8 @@ global:
   namespace: openlakes
 
 airflow:
-  enabled: true
-  fullnameOverride: airflow
+  enabled: false  # Disabled in favor of OpenMetadata ingestion
+  fullnameOverride: 04-orchestration-airflow
   image:
     repository: apache/airflow
     tag: "3.1.2"
@@ -34,3 +34,39 @@ airflow:
     adminUser: admin
     adminPassword: admin123
     adminEmail: admin@openlakes.local
+
+openmetadataIngestion:
+  enabled: false  # Moved to layer 07-catalog
+  fullnameOverride: 04-orchestration-ingestion
+  image:
+    repository: openmetadata/ingestion
+    tag: "1.10.7"
+    pullPolicy: IfNotPresent
+  webserver:
+    nodePort: 30084
+    replicas: 1
+    resources:
+      limits:
+        memory: 2Gi
+  scheduler:
+    replicas: 1
+    resources:
+      limits:
+        memory: 2Gi
+  database:
+    host: postgres
+    port: 5432
+    name: openmetadata_airflow
+    user: openlakes
+    password: openlakes123
+  persistence:
+    size: 10Gi
+  adminUser:
+    username: admin
+    password: admin
+    firstname: Admin
+    lastname: User
+    email: admin@openmetadata.org
+    role: Admin
+  openmetadata:
+    serverUrl: http://openmetadata:8585

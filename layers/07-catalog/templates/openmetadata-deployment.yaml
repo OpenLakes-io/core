@@ -3,7 +3,7 @@
 apiVersion: apps/v1
 kind: Deployment
 metadata:
-  name: openmetadata
+  name: {{ .Values.openmetadata.fullnameOverride }}
   namespace: {{ .Values.global.namespace }}
   labels:
     app: openmetadata
@@ -128,6 +128,26 @@ spec:
             value: "true"
           - name: PIPELINE_SERVICE_CLIENT_CLASS_NAME
             value: {{ .Values.openmetadata.pipelineServiceClient.className | quote }}
+          - name: PIPELINE_SERVICE_CLIENT_ENDPOINT
+            value: "http://openmetadata-ingestion:8080"
+          - name: SERVER_HOST_API_URL
+            value: "http://openmetadata-server:8585/api"
+          - name: PIPELINE_SERVICE_CLIENT_API_ENDPOINT
+            value: {{ .Values.openmetadata.pipelineServiceClient.apiEndpoint | quote }}
+          - name: PIPELINE_SERVICE_CLIENT_METADATA_API_ENDPOINT
+            value: {{ .Values.openmetadata.pipelineServiceClient.metadataApiEndpoint | quote }}
+          - name: PIPELINE_SERVICE_CLIENT_INGESTION_IP_INFO_ENABLED
+            value: {{ .Values.openmetadata.pipelineServiceClient.ingestionIpInfoEnabled | quote }}
+          - name: PIPELINE_SERVICE_CLIENT_HOST_IP
+            value: {{ .Values.openmetadata.pipelineServiceClient.hostIp | quote }}
+          - name: PIPELINE_SERVICE_CLIENT_VERIFY_SSL
+            value: "no-ssl"
+          - name: AIRFLOW_USERNAME
+            value: {{ .Values.openmetadata.pipelineServiceClient.parameters.username | quote }}
+          - name: AIRFLOW_PASSWORD
+            value: {{ .Values.openmetadata.pipelineServiceClient.parameters.password | quote }}
+          - name: AIRFLOW_TIMEOUT
+            value: {{ .Values.openmetadata.pipelineServiceClient.parameters.timeout | quote }}
           {{- else }}
           - name: PIPELINE_SERVICE_CLIENT_ENABLED
             value: "false"

@@ -1,0 +1,253 @@
+{{- if .Values.ingestion.enabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.ingestion.fullnameOverride }}-dags
+  namespace: {{ .Values.global.namespace }}
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.global.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.ingestion.persistence.size }}
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.ingestion.fullnameOverride }}-db-migrate
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: ingestion
+    component: db-migrate
+  annotations:
+    "helm.sh/hook": pre-install,pre-upgrade
+    "helm.sh/hook-weight": "-5"
+    "helm.sh/hook-delete-policy": before-hook-creation
+spec:
+  ttlSecondsAfterFinished: 600
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: ingestion
+        component: db-migrate
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+      - name: wait-for-database
+        image: postgres:16
+        env:
+        - name: PGPASSWORD
+          value: "{{ .Values.ingestion.database.password }}"
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          echo "Waiting for PostgreSQL to be ready..."
+          until pg_isready -h {{ .Values.ingestion.database.host }} -p {{ .Values.ingestion.database.port }} -U {{ .Values.ingestion.database.user }}; do
+            echo "PostgreSQL not ready, waiting..."
+            sleep 5
+          done
+
+          echo "Waiting for '{{ .Values.ingestion.database.name }}' database to exist..."
+          until psql -h {{ .Values.ingestion.database.host }} -p {{ .Values.ingestion.database.port }} -U {{ .Values.ingestion.database.user }} -lqt | cut -d \| -f 1 | grep -qw {{ .Values.ingestion.database.name }}; do
+            echo "Database '{{ .Values.ingestion.database.name }}' not found, waiting..."
+            sleep 5
+          done
+          echo "Database '{{ .Values.ingestion.database.name }}' exists!"
+      containers:
+      - name: db-migrate
+        image: {{ .Values.ingestion.image.repository }}:{{ .Values.ingestion.image.tag }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          # Run database migration
+          airflow db migrate
+
+          # Create admin user
+          airflow users create \
+            --username {{ .Values.ingestion.adminUser.username }} \
+            --firstname {{ .Values.ingestion.adminUser.firstname }} \
+            --lastname {{ .Values.ingestion.adminUser.lastname }} \
+            --email {{ .Values.ingestion.adminUser.email }} \
+            --role {{ .Values.ingestion.adminUser.role }} \
+            --password {{ .Values.ingestion.adminUser.password }} || true
+        env:
+        - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+          value: "postgresql+psycopg2://{{ .Values.ingestion.database.user }}:{{ .Values.ingestion.database.password }}@{{ .Values.ingestion.database.host }}:{{ .Values.ingestion.database.port }}/{{ .Values.ingestion.database.name }}"
+        - name: AIRFLOW__CORE__EXECUTOR
+          value: "LocalExecutor"
+        - name: AIRFLOW__CORE__LOAD_EXAMPLES
+          value: "False"
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.ingestion.fullnameOverride }}-webserver
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: ingestion
+    component: webserver
+spec:
+  replicas: {{ .Values.ingestion.webserver.replicas }}
+  selector:
+    matchLabels:
+      app: ingestion
+      component: webserver
+  template:
+    metadata:
+      labels:
+        app: ingestion
+        component: webserver
+    spec:
+      containers:
+      - name: webserver
+        image: {{ .Values.ingestion.image.repository }}:{{ .Values.ingestion.image.tag }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          # Wait for db init to complete
+          echo "Waiting for database initialization to complete..."
+          sleep 30
+
+          # Start webserver
+          airflow webserver
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+          value: "postgresql+psycopg2://{{ .Values.ingestion.database.user }}:{{ .Values.ingestion.database.password }}@{{ .Values.ingestion.database.host }}:{{ .Values.ingestion.database.port }}/{{ .Values.ingestion.database.name }}"
+        - name: AIRFLOW__CORE__EXECUTOR
+          value: "LocalExecutor"
+        - name: AIRFLOW__CORE__LOAD_EXAMPLES
+          value: "False"
+        - name: AIRFLOW__CORE__DAGS_FOLDER
+          value: "/opt/airflow/dags"
+        - name: AIRFLOW__API__AUTH_BACKENDS
+          value: "airflow.api.auth.backend.basic_auth"
+        - name: AIRFLOW__WEBSERVER__BASE_URL
+          value: "http://localhost:8080"
+        - name: SERVER_HOST_API_URL
+          value: "{{ .Values.ingestion.openmetadata.serverUrl }}/api"
+        volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
+        resources:
+          {{- toYaml .Values.ingestion.webserver.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          httpGet:
+            path: /health
+            port: 8080
+          initialDelaySeconds: 45
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      volumes:
+      - name: dags
+        persistentVolumeClaim:
+          claimName: {{ .Values.ingestion.fullnameOverride }}-dags
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.ingestion.fullnameOverride }}-scheduler
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: ingestion
+    component: scheduler
+spec:
+  replicas: {{ .Values.ingestion.scheduler.replicas }}
+  selector:
+    matchLabels:
+      app: ingestion
+      component: scheduler
+  template:
+    metadata:
+      labels:
+        app: ingestion
+        component: scheduler
+    spec:
+      containers:
+      - name: scheduler
+        image: {{ .Values.ingestion.image.repository }}:{{ .Values.ingestion.image.tag }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          # Wait for db init to complete
+          echo "Waiting for database initialization to complete..."
+          sleep 30
+
+          # Start scheduler
+          airflow scheduler
+        env:
+        - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+          value: "postgresql+psycopg2://{{ .Values.ingestion.database.user }}:{{ .Values.ingestion.database.password }}@{{ .Values.ingestion.database.host }}:{{ .Values.ingestion.database.port }}/{{ .Values.ingestion.database.name }}"
+        - name: AIRFLOW__CORE__EXECUTOR
+          value: "LocalExecutor"
+        - name: AIRFLOW__CORE__LOAD_EXAMPLES
+          value: "False"
+        - name: AIRFLOW__CORE__DAGS_FOLDER
+          value: "/opt/airflow/dags"
+        - name: SERVER_HOST_API_URL
+          value: "{{ .Values.ingestion.openmetadata.serverUrl }}/api"
+        volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
+        resources:
+          {{- toYaml .Values.ingestion.scheduler.resources | nindent 10 }}
+        livenessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - |
+              airflow jobs check --job-type SchedulerJob --hostname $(hostname)
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 5
+      volumes:
+      - name: dags
+        persistentVolumeClaim:
+          claimName: {{ .Values.ingestion.fullnameOverride }}-dags
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: openmetadata-ingestion
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: ingestion
+    component: webserver
+spec:
+  type: {{ .Values.global.networking.type | default "ClusterIP" }}
+  selector:
+    app: ingestion
+    component: webserver
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    {{- if eq (.Values.global.networking.type | default "ClusterIP") "NodePort" }}
+    nodePort: {{ .Values.ingestion.webserver.nodePort }}
+    {{- end }}
+{{- end }}

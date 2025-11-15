@@ -92,6 +92,8 @@ spec:
           value: "{{ .Values.airflow.executor }}"
         - name: AIRFLOW__CORE__LOAD_EXAMPLES
           value: "False"
+        - name: AIRFLOW__CORE__DISABLED_PROVIDERS
+          value: "apache.airflow.providers.git"
 
 ---
 apiVersion: apps/v1
@@ -125,8 +127,8 @@ spec:
           echo "Waiting for database migration to complete..."
           sleep 30
 
-          # Start webserver (api-server in 3.1.2+)
-          airflow api-server
+          # Start webserver
+          airflow webserver
         ports:
         - containerPort: 8080
           name: http
@@ -139,6 +141,8 @@ spec:
           value: "False"
         - name: AIRFLOW__CORE__DAGS_FOLDER
           value: "/opt/airflow/dags"
+        - name: AIRFLOW__CORE__DISABLED_PROVIDERS
+          value: "apache.airflow.providers.git"
         volumeMounts:
         - name: dags
           mountPath: /opt/airflow/dags
@@ -206,6 +210,8 @@ spec:
           value: "False"
         - name: AIRFLOW__CORE__DAGS_FOLDER
           value: "/opt/airflow/dags"
+        - name: AIRFLOW__CORE__DISABLED_PROVIDERS
+          value: "apache.airflow.providers.git"
         volumeMounts:
         - name: dags
           mountPath: /opt/airflow/dags
@@ -231,7 +237,7 @@ spec:
 apiVersion: v1
 kind: Service
 metadata:
-  name: {{ .Values.airflow.fullnameOverride }}-webserver
+  name: airflow-webserver
   namespace: {{ .Values.global.namespace }}
   labels:
     app: airflow

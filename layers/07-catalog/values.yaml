@@ -8,13 +8,14 @@ openmetadata:
   # OpenMetadata is deployed as part of this layer chart
   # No separate Helm chart installation required
   enabled: true
+  fullnameOverride: 07-catalog-openmetadata
 
   nodePort: 30585
 
   # Image Configuration
   image:
     repository: docker.getcollate.io/openmetadata/server
-    tag: "1.6.1"
+    tag: "1.10.7"
     pullPolicy: IfNotPresent
 
   # Database Configuration (using existing OpenLakes PostgreSQL)
@@ -40,16 +41,23 @@ openmetadata:
 
   # Pipeline Service Client Configuration
   pipelineServiceClient:
-    enabled: false
-    className: org.openmetadata.service.clients.pipeline.noop.NoopClient
-    apiEndpoint: ""
-    metadataApiEndpoint: ""
+    enabled: true
+    className: org.openmetadata.service.clients.pipeline.airflow.AirflowRESTClient
+    apiEndpoint: http://openmetadata-ingestion:8080
+    metadataApiEndpoint: http://openmetadata-server:8585/api
+    ingestionIpInfoEnabled: false
+    hostIp: ""
+    # Auth configuration for Airflow (uses basic auth)
+    parameters:
+      username: admin
+      password: admin
+      timeout: 10
 
   # Authentication Configuration
   authentication:
     provider: basic
     publicKeys:
-      - "http://openmetadata:8585/api/v1/system/config/jwks"
+      - "http://openmetadata-server:8585/api/v1/system/config/jwks"
     enableSelfSignup: true
     jwtPrincipalClaims:
       - email
@@ -91,17 +99,17 @@ openmetadata:
 
   # Probes Configuration
   livenessProbe:
-    initialDelaySeconds: 30
+    initialDelaySeconds: 5
     periodSeconds: 30
     failureThreshold: 5
 
   readinessProbe:
-    initialDelaySeconds: 30
+    initialDelaySeconds: 5
     periodSeconds: 5
     failureThreshold: 3
 
   startupProbe:
-    periodSeconds: 15
+    periodSeconds: 5
     failureThreshold: 5
     successThreshold: 1
 
@@ -254,3 +262,40 @@ services:
     endpoint: http://superset.openlakes.svc.cluster.local:8088
     username: admin
     password: admin
+# OpenMetadata Ingestion (Airflow for metadata workflows)
+ingestion:
+  enabled: true
+  fullnameOverride: 07-catalog-ingestion
+  image:
+    repository: openmetadata/ingestion
+    tag: "1.10.7"
+    pullPolicy: IfNotPresent
+  webserver:
+    nodePort: 30084
+    replicas: 1
+    resources:
+      limits:
+        memory: 2Gi
+  scheduler:
+    replicas: 1
+    resources:
+      limits:
+        memory: 2Gi
+  database:
+    host: postgres
+    port: 5432
+    name: openmetadata_airflow
+    user: openlakes
+    password: openlakes123
+  persistence:
+    size: 10Gi
+  adminUser:
+    username: admin
+    password: admin
+    firstname: Admin
+    lastname: User
+    email: admin@openmetadata.org
+    role: Admin
+  openmetadata:
+    serverUrl: http://openmetadata-server:8585
+

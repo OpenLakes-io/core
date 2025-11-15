@@ -3,7 +3,7 @@
 apiVersion: batch/v1
 kind: Job
 metadata:
-  name: openmetadata-migrate
+  name: {{ .Values.openmetadata.fullnameOverride }}-migrate
   namespace: {{ .Values.global.namespace }}
   labels:
     app: openmetadata

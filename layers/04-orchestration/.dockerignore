@@ -1,0 +1,18 @@
+# Ignore Helm charts and Kubernetes manifests
+*.yaml
+Chart.yaml
+values.yaml
+charts/
+templates/
+
+# Ignore git files
+.git
+.gitignore
+
+# Ignore documentation
+*.md
+docs/
+
+# Keep only Dockerfile and requirements if needed
+!Dockerfile
+!requirements*.txt

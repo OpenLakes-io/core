@@ -1,0 +1,198 @@
+{{- if .Values.openmetadata.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.openmetadata.fullnameOverride }}-validation-script
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata
+    component: validation
+data:
+  validate-sources.sh: |-
+    #!/bin/bash
+    set -e
+
+    # Configuration
+    TIMEOUT=180  # 3 minutes
+    START_TIME=$(date +%s)
+    OPENMETADATA_URL="http://openmetadata:8585/api/v1"
+
+    # Expected data sources from the stack
+    EXPECTED_SOURCES=(
+      "openlakes-postgres:databaseServices"
+      "openlakes-trino:databaseServices"
+      "openlakes-kafka:messagingServices"
+      "openlakes-airflow:pipelineServices"
+      "openlakes-flink:pipelineServices"
+      "openlakes-superset:dashboardServices"
+      "openlakes-minio:storageServices"
+      "openlakes-redis:databaseServices"
+      "openlakes-opensearch:searchServices"
+      "openlakes-spark:pipelineServices"
+      "openlakes-airbyte:pipelineServices"
+      "openlakes-debezium:messagingServices"
+    )
+
+    echo "=========================================="
+    echo "OpenMetadata Source Validation"
+    echo "=========================================="
+    echo "Timeout: ${TIMEOUT}s (3 minutes)"
+    echo "Expected sources: ${#EXPECTED_SOURCES[@]}"
+    echo
+
+    # Get bot token for authentication
+    echo "Step 1: Retrieving bot token..."
+    if [ -z "$BOT_TOKEN" ]; then
+      echo "❌ ERROR: BOT_TOKEN environment variable not set"
+      exit 1
+    fi
+    AUTH_HEADER="Authorization: Bearer $BOT_TOKEN"
+    echo "✓ Bot token configured"
+    echo
+
+    # Function to check if a service exists
+    check_service() {
+      local service_name=$1
+      local service_type=$2
+
+      RESPONSE=$(curl -sf -H "$AUTH_HEADER" \
+        "${OPENMETADATA_URL}/${service_type}/name/${service_name}" 2>/dev/null || echo "")
+
+      if [ -n "$RESPONSE" ]; then
+        # Parse connection status if available
+        STATUS=$(echo "$RESPONSE" | grep -o '"testConnectionResult":{[^}]*}' | grep -o '"status":"[^"]*"' | cut -d'"' -f4 || echo "unknown")
+        return 0
+      else
+        return 1
+      fi
+    }
+
+    # Validate all expected sources
+    echo "Step 3: Validating registered data sources..."
+    FOUND_COUNT=0
+    MISSING_SOURCES=()
+
+    for source_entry in "${EXPECTED_SOURCES[@]}"; do
+      IFS=':' read -r source_name service_type <<< "$source_entry"
+
+      CURRENT_TIME=$(date +%s)
+      ELAPSED=$((CURRENT_TIME - START_TIME))
+
+      if [ $ELAPSED -gt $TIMEOUT ]; then
+        echo "❌ TIMEOUT: Validation exceeded ${TIMEOUT}s"
+        exit 1
+      fi
+
+      echo -n "  Checking ${source_name} (${service_type})... "
+
+      # Retry logic for each source (up to 30 seconds)
+      RETRY_COUNT=0
+      MAX_RETRIES=6
+      while [ $RETRY_COUNT -lt $MAX_RETRIES ]; do
+        if check_service "$source_name" "$service_type"; then
+          echo "✓ Found"
+          ((FOUND_COUNT++))
+          break
+        fi
+
+        CURRENT_TIME=$(date +%s)
+        ELAPSED=$((CURRENT_TIME - START_TIME))
+
+        if [ $ELAPSED -gt $TIMEOUT ]; then
+          echo "❌ TIMEOUT"
+          exit 1
+        fi
+
+        ((RETRY_COUNT++))
+        if [ $RETRY_COUNT -lt $MAX_RETRIES ]; then
+          sleep 5
+        fi
+      done
+
+      if [ $RETRY_COUNT -eq $MAX_RETRIES ]; then
+        echo "❌ Not found"
+        MISSING_SOURCES+=("$source_name")
+      fi
+    done
+
+    echo
+    echo "=========================================="
+    echo "Validation Summary"
+    echo "=========================================="
+    echo "Expected sources: ${#EXPECTED_SOURCES[@]}"
+    echo "Found sources: ${FOUND_COUNT}"
+    echo "Missing sources: ${#MISSING_SOURCES[@]}"
+
+    if [ ${#MISSING_SOURCES[@]} -gt 0 ]; then
+      echo
+      echo "Missing sources:"
+      for source in "${MISSING_SOURCES[@]}"; do
+        echo "  - $source"
+      done
+      echo
+      echo "❌ VALIDATION FAILED: Not all sources are registered in OpenMetadata"
+      echo "   Please check the connector-setup job logs for errors"
+      exit 1
+    fi
+
+    echo
+    echo "✅ SUCCESS: All expected data sources are registered in OpenMetadata"
+    exit 0
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.openmetadata.fullnameOverride }}-validation
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata
+    component: validation
+spec:
+  ttlSecondsAfterFinished: 3600
+  backoffLimit: 2  # Allow retries
+  template:
+    metadata:
+      labels:
+        app: openmetadata
+        component: validation
+    spec:
+      restartPolicy: Never
+      initContainers:
+      - name: wait-for-openmetadata
+        image: busybox:1.36
+        command:
+        - sh
+        - -c
+        - |
+          echo "Waiting for OpenMetadata to be ready..."
+          until wget --spider -q http://openmetadata:8586/healthcheck 2>/dev/null; do
+            echo "  Still waiting..."
+            sleep 10
+          done
+          echo "OpenMetadata is ready!"
+      containers:
+      - name: validate-sources
+        image: alpine:latest
+        command:
+        - /bin/sh
+        - -c
+        - |
+          apk add --no-cache bash curl grep
+          bash /scripts/validate-sources.sh
+        env:
+        - name: BOT_TOKEN
+          valueFrom:
+            secretKeyRef:
+              name: openmetadata-bot-token
+              key: token
+        volumeMounts:
+        - name: scripts
+          mountPath: /scripts
+      volumes:
+      - name: scripts
+        configMap:
+          name: openmetadata-validation-script
+          defaultMode: 0755
+{{- end }}

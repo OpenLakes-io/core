@@ -60,6 +60,8 @@ spec:
         # Debezium Configuration
         - name: ENABLE_DEBEZIUM_SCRIPTING
           value: "true"
+        - name: HEAP_OPTS
+          value: "-Xms2G -Xmx2G"
         resources:
           {{- toYaml .Values.debezium.resources | nindent 10 }}
         livenessProbe:
