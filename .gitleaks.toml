@@ -1,0 +1,8 @@
+title = "OpenLakes Core gitleaks config"
+
+[allowlist]
+  description = "Allow config placeholders that look like secrets"
+  regexes = [
+    '''CFG_MELTANO_S3_BUCKET=""''',
+    '''CFG_INGRESS_ENABLED=""'''
+  ]
