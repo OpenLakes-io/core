@@ -43,7 +43,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: l1-test-results
           path: tests/results/
@@ -112,7 +112,7 @@ jobs:
 
       - name: Upload test results
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: l2-test-results-${{ matrix.test.name }}
           path: tests/results/
@@ -155,7 +155,7 @@ jobs:
 
       - name: Upload compatibility results
         if: always()
-        uses: actions/upload-artifact@v3
+        uses: actions/upload-artifact@v4
         with:
           name: compatibility-k8s-${{ matrix.kubernetes }}
           path: tests/results/
