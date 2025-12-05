@@ -44,8 +44,8 @@ ghcr.io/openlakes/core/openlakes-dashboard
 
 ## Tags
 
-- `1.0.0`, `1.0`, `1`, `latest` - Production release
-- `staging`, `1.0.0-staging` - Release candidate
+- `1.0.1`, `1.0`, `1`, `latest` - Production release
+- `staging`, `1.0.1-staging` - Release candidate
 - `dev` - Development (team collaboration)
 - `local` - Local builds (not pushed to registry)
 
@@ -66,17 +66,17 @@ BUILD_ENV=dev ./build.sh
 
 ### Staging (Release Candidate)
 ```bash
-BUILD_ENV=staging VERSION=1.0.0 ./build.sh
+BUILD_ENV=staging VERSION=1.0.1 ./build.sh
 # Creates and pushes:
 #   - ghcr.io/openlakes/core/openlakes-dashboard:staging
-#   - ghcr.io/openlakes/core/openlakes-dashboard:1.0.0-staging
+#   - ghcr.io/openlakes/core/openlakes-dashboard:1.0.1-staging
 ```
 
 ### Production (Automated via CI)
 ```bash
-BUILD_ENV=production VERSION=1.0.0 ./build.sh
+BUILD_ENV=production VERSION=1.0.1 ./build.sh
 # Creates and pushes:
-#   - ghcr.io/openlakes/core/openlakes-dashboard:1.0.0
+#   - ghcr.io/openlakes/core/openlakes-dashboard:1.0.1
 #   - ghcr.io/openlakes/core/openlakes-dashboard:1.0
 #   - ghcr.io/openlakes/core/openlakes-dashboard:1
 #   - ghcr.io/openlakes/core/openlakes-dashboard:latest
@@ -90,7 +90,7 @@ dashboard:
   enabled: true
   image:
     repository: ghcr.io/openlakes/core/openlakes-dashboard
-    tag: "1.0.0"
+    tag: "1.0.1"
     pullPolicy: IfNotPresent
   service:
     type: LoadBalancer

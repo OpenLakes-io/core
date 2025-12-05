@@ -8,7 +8,7 @@
 FROM node:18-alpine AS build
 
 # Build arguments for versioning
-ARG VERSION=1.0.0
+ARG VERSION=1.0.1
 ARG BUILD_DATE
 ARG VCS_REF
 
@@ -31,7 +31,7 @@ RUN npm run build
 FROM nginx:alpine
 
 # Build arguments for labels
-ARG VERSION=1.0.0
+ARG VERSION=1.0.1
 ARG BUILD_DATE
 ARG VCS_REF
 
@@ -71,7 +71,7 @@ ENV OPENLAKES_DOMAIN=openlakes.dev
 ENV OPENLAKES_PORT=30443
 ENV OPENLAKES_SERVICES_B64=""
 ENV OPENLAKES_SHOW_CREDENTIALS=true
-ENV OPENLAKES_VERSION=v1.0.0
+ENV OPENLAKES_VERSION=v1.0.1
 
 # Health check
 HEALTHCHECK --interval=30s --timeout=3s --start-period=5s --retries=3 \

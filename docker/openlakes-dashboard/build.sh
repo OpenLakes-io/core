@@ -13,7 +13,7 @@ set -euo pipefail
 IMAGE_NAME="openlakes-dashboard"
 REGISTRY="ghcr.io/openlakes/core"
 BUILD_ENV="${BUILD_ENV:-local}"
-VERSION="${VERSION:-1.0.0}"
+VERSION="${VERSION:-1.0.1}"
 
 # Get git info for labels
 VCS_REF=$(git rev-parse --short HEAD 2>/dev/null || echo "unknown")
@@ -72,7 +72,7 @@ case "$BUILD_ENV" in
   staging)
     if [ -z "$VERSION" ]; then
       echo "❌ Error: VERSION must be set for staging builds"
-      echo "   Usage: BUILD_ENV=staging VERSION=1.0.0 ./build.sh"
+      echo "   Usage: BUILD_ENV=staging VERSION=1.0.1 ./build.sh"
       exit 1
     fi
 
@@ -108,7 +108,7 @@ case "$BUILD_ENV" in
   production)
     if [ -z "$VERSION" ]; then
       echo "❌ Error: VERSION must be set for production builds"
-      echo "   Usage: BUILD_ENV=production VERSION=1.0.0 ./build.sh"
+      echo "   Usage: BUILD_ENV=production VERSION=1.0.1 ./build.sh"
       exit 1
     fi
 

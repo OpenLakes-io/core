@@ -705,7 +705,7 @@ dashboard:
 
   image:
     repository: ghcr.io/openlakes/core/openlakes-dashboard
-    tag: "1.0.0"
+    tag: "1.0.1"
     pullPolicy: Always
 
   # Environment variables for service URL configuration
@@ -714,7 +714,7 @@ dashboard:
     domain: "openlakes.dev"
     port: "443"
     showCredentials: "true"
-    version: "v1.0.0"
+    version: "v1.0.1"
     servicesB64: ""
 
   service:

@@ -62,7 +62,7 @@ const config = {
   port: window.ENV?.PORT || '',
 };
 
-const dashboardVersion = window.ENV?.VERSION || 'v1.0.0';
+const dashboardVersion = window.ENV?.VERSION || 'v1.0.1';
 
 const buildServiceUrl = (subdomain, path = '') => {
   if (!subdomain) {

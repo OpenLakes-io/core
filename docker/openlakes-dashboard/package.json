@@ -1,6 +1,6 @@
 {
   "name": "openlakes-dashboard",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "OpenLakes Core service dashboard",
   "private": true,
   "dependencies": {
