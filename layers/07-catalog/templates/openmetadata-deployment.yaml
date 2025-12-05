@@ -1,0 +1,215 @@
+{{- if .Values.openmetadata.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.openmetadata.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata
+    component: server
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: openmetadata
+      component: server
+  template:
+    metadata:
+      labels:
+        app: openmetadata
+        component: server
+    spec:
+      initContainers:
+      # Wait for PostgreSQL to be ready
+      - name: wait-for-db
+        image: postgres:15
+        command:
+          - sh
+          - -c
+          - |
+            until pg_isready -h {{ .Values.openmetadata.database.host }} -p {{ .Values.openmetadata.database.port }} -U {{ .Values.openmetadata.database.username }}; do
+              echo "Waiting for PostgreSQL..."
+              sleep 2
+            done
+            echo "PostgreSQL is ready"
+        env:
+          - name: PGPASSWORD
+            value: {{ .Values.openmetadata.database.password | quote }}
+
+      # Wait for OpenSearch/Elasticsearch to be ready
+      {{- if .Values.openmetadata.elasticsearch.enabled }}
+      - name: wait-for-opensearch
+        image: curlimages/curl:8.5.0
+        command:
+          - sh
+          - -c
+          - |
+            until curl -s http://{{ .Values.openmetadata.elasticsearch.host }}:{{ .Values.openmetadata.elasticsearch.port }}/_cluster/health; do
+              echo "Waiting for OpenSearch..."
+              sleep 5
+            done
+            echo "OpenSearch is ready"
+      {{- end }}
+
+      containers:
+      - name: openmetadata
+        image: {{ .Values.openmetadata.image.repository }}:{{ .Values.openmetadata.image.tag }}
+        imagePullPolicy: {{ .Values.openmetadata.image.pullPolicy }}
+        ports:
+          - name: http
+            containerPort: 8585
+            protocol: TCP
+          - name: http-admin
+            containerPort: 8586
+            protocol: TCP
+        env:
+          # Database Configuration
+          - name: DB_DRIVER_CLASS
+            value: {{ .Values.openmetadata.database.driverClass | quote }}
+          - name: DB_SCHEME
+            value: {{ .Values.openmetadata.database.dbScheme | quote }}
+          - name: DB_HOST
+            value: {{ .Values.openmetadata.database.host | quote }}
+          - name: DB_PORT
+            value: {{ .Values.openmetadata.database.port | quote }}
+          - name: DB_USER
+            value: {{ .Values.openmetadata.database.username | quote }}
+          - name: DB_USER_PASSWORD
+            value: {{ .Values.openmetadata.database.password | quote }}
+          - name: OM_DATABASE
+            value: {{ .Values.openmetadata.database.databaseName | quote }}
+          - name: DB_PARAMS
+            value: {{ .Values.openmetadata.database.dbParams | quote }}
+
+          # OpenSearch/Elasticsearch Configuration
+          {{- if .Values.openmetadata.elasticsearch.enabled }}
+          - name: SEARCH_TYPE
+            value: {{ .Values.openmetadata.elasticsearch.searchType | quote }}
+          - name: ELASTICSEARCH_HOST
+            value: {{ .Values.openmetadata.elasticsearch.host | quote }}
+          - name: ELASTICSEARCH_PORT
+            value: {{ .Values.openmetadata.elasticsearch.port | quote }}
+          - name: ELASTICSEARCH_SCHEME
+            value: {{ .Values.openmetadata.elasticsearch.scheme | quote }}
+          {{- end }}
+
+          # Server Configuration
+          - name: SERVER_HOST
+            value: "0.0.0.0"
+          - name: SERVER_PORT
+            value: "8585"
+          - name: SERVER_ADMIN_PORT
+            value: "8586"
+
+          # Authentication Configuration
+          - name: AUTHENTICATION_PROVIDER
+            value: {{ .Values.openmetadata.authentication.provider | quote }}
+          - name: AUTHENTICATION_PUBLIC_KEYS
+            value: '[{{ .Values.openmetadata.authentication.publicKeys | join "," }}]'
+          - name: AUTHENTICATION_ENABLE_SELF_SIGNUP
+            value: {{ .Values.openmetadata.authentication.enableSelfSignup | quote }}
+
+          # Authorizer Configuration
+          - name: AUTHORIZER_CLASS_NAME
+            value: {{ .Values.openmetadata.authorizer.className | quote }}
+          - name: AUTHORIZER_ADMIN_PRINCIPALS
+            value: '[{{ .Values.openmetadata.authorizer.initialAdmins | join "," }}]'
+          - name: AUTHORIZER_PRINCIPAL_DOMAIN
+            value: {{ .Values.openmetadata.authorizer.principalDomain | quote }}
+
+          # Secrets Manager Configuration
+          - name: SECRET_MANAGER
+            value: {{ .Values.openmetadata.secretsManager.provider | quote }}
+
+          # Pipeline Service Client Configuration
+          {{- if .Values.openmetadata.pipelineServiceClient.enabled }}
+          - name: PIPELINE_SERVICE_CLIENT_ENABLED
+            value: "true"
+          - name: PIPELINE_SERVICE_CLIENT_CLASS_NAME
+            value: {{ .Values.openmetadata.pipelineServiceClient.className | quote }}
+          - name: PIPELINE_SERVICE_CLIENT_ENDPOINT
+            value: "http://catalog-openmetadata-ingestion:8080"
+          - name: SERVER_HOST_API_URL
+            value: "http://catalog-openmetadata-server:8585/api"
+          - name: PIPELINE_SERVICE_CLIENT_API_ENDPOINT
+            value: {{ .Values.openmetadata.pipelineServiceClient.apiEndpoint | quote }}
+          - name: PIPELINE_SERVICE_CLIENT_METADATA_API_ENDPOINT
+            value: {{ .Values.openmetadata.pipelineServiceClient.metadataApiEndpoint | quote }}
+          - name: PIPELINE_SERVICE_CLIENT_INGESTION_IP_INFO_ENABLED
+            value: {{ .Values.openmetadata.pipelineServiceClient.ingestionIpInfoEnabled | quote }}
+          - name: PIPELINE_SERVICE_CLIENT_HOST_IP
+            value: {{ .Values.openmetadata.pipelineServiceClient.hostIp | quote }}
+          - name: PIPELINE_SERVICE_CLIENT_VERIFY_SSL
+            value: "no-ssl"
+          - name: AIRFLOW_USERNAME
+            value: {{ .Values.openmetadata.pipelineServiceClient.parameters.username | quote }}
+          - name: AIRFLOW_PASSWORD
+            value: {{ .Values.openmetadata.pipelineServiceClient.parameters.password | quote }}
+          - name: AIRFLOW_TIMEOUT
+            value: {{ .Values.openmetadata.pipelineServiceClient.parameters.timeout | quote }}
+          {{- else }}
+          - name: PIPELINE_SERVICE_CLIENT_ENABLED
+            value: "false"
+          - name: PIPELINE_SERVICE_CLIENT_CLASS_NAME
+            value: "org.openmetadata.service.clients.pipeline.noop.NoopClient"
+          {{- end }}
+
+          # Logging
+          - name: LOG_LEVEL
+            value: {{ .Values.openmetadata.logLevel | quote }}
+
+        {{- $profile := .Values.openmetadata.probeProfile | default "slow" }}
+        {{- if eq $profile "fast" }}
+        livenessProbe:
+          httpGet: { path: /healthcheck, port: http-admin }
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 6
+        readinessProbe:
+          httpGet: { path: /healthcheck, port: http-admin }
+          initialDelaySeconds: 10
+          periodSeconds: 10
+          failureThreshold: 6
+        startupProbe:
+          httpGet: { path: /healthcheck, port: http-admin }
+          periodSeconds: 5
+          failureThreshold: 20
+          successThreshold: 1
+        {{- else if eq $profile "medium" }}
+        livenessProbe:
+          httpGet: { path: /healthcheck, port: http-admin }
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          failureThreshold: 10
+        readinessProbe:
+          httpGet: { path: /healthcheck, port: http-admin }
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          failureThreshold: 10
+        startupProbe:
+          httpGet: { path: /healthcheck, port: http-admin }
+          periodSeconds: 10
+          failureThreshold: 30
+          successThreshold: 1
+        {{- else }}
+        livenessProbe:
+          httpGet: { path: /healthcheck, port: http-admin }
+          initialDelaySeconds: 60
+          periodSeconds: 20
+          failureThreshold: 30
+        readinessProbe:
+          httpGet: { path: /healthcheck, port: http-admin }
+          initialDelaySeconds: 60
+          periodSeconds: 20
+          failureThreshold: 30
+        startupProbe:
+          httpGet: { path: /healthcheck, port: http-admin }
+          periodSeconds: 15
+          failureThreshold: 40
+          successThreshold: 1
+        {{- end }}
+
+        resources:
+          {{- toYaml .Values.openmetadata.resources | nindent 10 }}
+{{- end }}

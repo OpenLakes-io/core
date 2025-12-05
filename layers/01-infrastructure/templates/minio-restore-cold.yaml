@@ -1,0 +1,49 @@
+{{- if .Values.minio.enabled }}
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: infrastructure-minio-restore-hot
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: minio-restore
+    component: restore-hot
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: minio-restore
+      component: restore-hot
+  template:
+    metadata:
+      labels:
+        app: minio-restore
+        component: restore-hot
+    spec:
+      restartPolicy: Always
+      containers:
+      - name: restore
+        image: minio/mc:latest
+        env:
+        - name: MINIO_ENDPOINT
+          value: "http://{{ .Values.minio.fullnameOverride }}:9000"
+        - name: MINIO_ROOT_USER
+          value: {{ .Values.minio.auth.rootUser | quote }}
+        - name: MINIO_ROOT_PASSWORD
+          value: {{ .Values.minio.auth.rootPassword | quote }}
+        - name: BUCKET_MAIN
+          value: {{ .Values.minio.buckets.main | default "openlakes" | quote }}
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -e
+          echo "Waiting for MinIO to be reachable at ${MINIO_ENDPOINT}..."
+          until mc alias set minio "${MINIO_ENDPOINT}" "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" >/dev/null 2>&1; do
+            sleep 3
+          done
+          while true; do
+            # Restore objects accessed in last 24h back to hot for 1d
+            mc ilm restore --recursive --days 1 --last 24h "minio/${BUCKET_MAIN}" || true
+            sleep 60
+          done
+{{- end }}

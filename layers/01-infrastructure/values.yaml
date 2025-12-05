@@ -1,0 +1,731 @@
+global:
+  networking:
+    type: ClusterIP  # Services use ClusterIP, exposed via Ingress resources
+    ingressClass: traefik
+    domain: openlakes.dev  # All services accessible via *.openlakes.dev
+    enableIngressRoutes: true  # Create Traefik IngressRoutes for hostname routing
+  storageClass: longhorn  # Default to Longhorn for distributed, replicated storage
+  namespace: openlakes
+  minioStorageClass: ""  # Empty so StatefulSet binds to pre-created hostPath PVs
+  # Optional tenant identifier for multi-tenant deployments
+  # When set, adds openlakes.io/tenant label to all resources
+  tenant: ""
+  # ═══════════════════════════════════════════════════════════════
+  # Service References (for cross-service communication)
+  # ═══════════════════════════════════════════════════════════════
+  # These define how services reference each other within the cluster.
+  # Override these when deploying in multi-tenant mode to point to
+  # the correct tenant-specific or shared services.
+  services:
+    postgresql:
+      host: infrastructure-postgres
+      port: 5432
+    minio:
+      host: infrastructure-minio
+      port: 9000
+      endpoint: http://infrastructure-minio:9000
+    kafka:
+      host: infrastructure-kafka
+      port: 9092
+      bootstrapServers: infrastructure-kafka:9092
+    nessie:
+      host: infrastructure-nessie
+      port: 19120
+
+# ═══════════════════════════════════════════════════════════════
+# Longhorn - Distributed Block Storage
+# ═══════════════════════════════════════════════════════════════
+# Provides replicated persistent storage across all cluster nodes
+# Enables stateful services (PostgreSQL, etc.) to run on any node with data accessibility
+#
+# Storage allocation: 150GB per node reserved for Longhorn
+# Replication: Data replicated across nodes for high availability
+# Excludes: Raspberry Pi nodes (insufficient resources)
+longhorn:
+  enabled: true
+
+  # Node selection - exclude Raspberry Pi nodes from ALL components
+  longhornManager:
+    nodeSelector:
+      kubernetes.io/arch: amd64  # Only run on x86_64 nodes (exclude ARM/RPi)
+
+  longhornDriver:
+    nodeSelector:
+      kubernetes.io/arch: amd64
+
+  longhornUI:
+    nodeSelector:
+      kubernetes.io/arch: amd64
+
+  # Exclude RPi from CSI plugin DaemonSet
+  csi:
+    attacherReplicaCount: 2
+    provisionerReplicaCount: 2
+    resizerReplicaCount: 2
+    snapshotterReplicaCount: 2
+    nodeSelector:
+      kubernetes.io/arch: amd64
+
+  # Exclude RPi from engine image DaemonSet
+  engineImage:
+    nodeSelector:
+      kubernetes.io/arch: amd64
+
+  # Default settings
+  defaultSettings:
+    # Storage reservation per node (150GB)
+    storageMinimalAvailablePercentage: 10
+    storageOverProvisioningPercentage: 100
+
+    # Default replica count (2 replicas for data durability)
+    # With 2 replicas, data survives single node failure
+    defaultReplicaCount: 2
+
+    # Guarantee minimum replicas
+    guaranteedInstanceManagerCpu: 12
+
+    # Data locality - try to keep replica on same node for performance
+    defaultDataLocality: best-effort
+
+    # Backup settings (optional - for future use)
+    backupTarget: ""
+    backupTargetCredentialSecret: ""
+
+    # Storage path on each node
+    # Uses /longhorn for all OpenLakes deployments
+    defaultDataPath: /longhorn
+
+    # Automatically cleanup snapshots
+    autoCleanupSystemGeneratedSnapshot: true
+
+    # Concurrent replica rebuild limit
+    concurrentReplicaRebuildPerNodeLimit: 2
+
+  # Persistence for Longhorn manager
+  persistence:
+    defaultClass: true
+    defaultClassReplicaCount: 2
+    reclaimPolicy: Retain
+
+  # Ingress for Longhorn UI (optional - access at longhorn.openlakes.dev)
+  ingress:
+    enabled: true
+    host: longhorn.openlakes.dev
+    ingressClassName: traefik
+    annotations:
+      traefik.ingress.kubernetes.io/router.entrypoints: web
+
+# ═══════════════════════════════════════════════════════════════
+# Traefik Ingress Controller - Host-based Routing
+# ═══════════════════════════════════════════════════════════════
+# Provides single entry point on port 80 with domain-based routing
+# All OpenLakes services accessible via *.openlakes.dev
+#
+# Services:
+#   - minio.openlakes.dev           → MinIO Console
+#   - nessie.openlakes.dev          → Nessie REST API (Iceberg catalog)
+#   - schema-registry.openlakes.dev → Kafka Schema Registry REST API
+#   - trino.openlakes.dev           → Trino UI
+#   - spark.openlakes.dev           → Spark Master UI
+#   - spark-history.openlakes.dev   → Spark History Server
+#   - airflow.openlakes.dev         → Airflow UI
+#   - superset.openlakes.dev        → Superset
+#   - metadata.openlakes.dev        → OpenMetadata
+#   - debezium.openlakes.dev        → Debezium REST API
+#
+# Local DNS Configuration:
+#   Add to /etc/hosts (or use dnsmasq):
+#   127.0.0.1 minio.openlakes.dev nessie.openlakes.dev trino.openlakes.dev ...
+traefik:
+  enabled: true
+  useExisting: false  # Set true to skip deploying Traefik chart but still create ingress routes
+  fullnameOverride: infrastructure-traefik
+
+  # Deployment configuration
+  deployment:
+    replicas: 1
+    nodeSelector:
+      kubernetes.io/hostname: rbp2
+    tolerations:
+      - key: role
+        operator: Equal
+        value: control-only
+        effect: NoSchedule
+
+  # Service configuration - use NodePort to avoid hostPort binding conflicts
+  service:
+    type: NodePort
+    nodePorts:
+      web: 30080
+      websecure: 30443
+
+  # Ports configuration
+  ports:
+    web:
+      port: 80
+      exposedPort: 80
+    websecure:
+      port: 443
+      exposedPort: 443
+      # Enable TLS on websecure entrypoint
+      tls:
+        enabled: true
+        # Use default cert resolver for all routes that don't specify one
+        certResolver: letsencrypt
+    traefik:
+      port: 9000  # Dashboard port
+      expose:
+        default: true
+      exposedPort: 9000
+
+  # Enable Traefik dashboard
+  ingressRoute:
+    dashboard:
+      enabled: true
+      # Access via: https://traefik.openlakes.dev/dashboard/
+
+  # Logs
+  logs:
+    general:
+      level: INFO
+    access:
+      enabled: true
+
+  # Providers
+  providers:
+    kubernetesCRD:
+      enabled: true
+    kubernetesIngress:
+      enabled: true
+      publishedService:
+        enabled: true
+
+  # Let's Encrypt Certificate Resolver
+  certResolver:
+    cloudflare:
+      enabled: true
+      email: aleksarias@gmail.com  # Email for Let's Encrypt notifications
+      apiToken: "CHANGEME_CLOUDFLARE_API_TOKEN"  # Replace with your Cloudflare API token
+
+  # Additional environment variables for Cloudflare DNS challenge
+  env:
+    - name: CLOUDFLARE_DNS_API_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: cloudflare-api-token
+          key: CF_API_TOKEN
+    - name: CLOUDFLARE_ZONE_API_TOKEN
+      valueFrom:
+        secretKeyRef:
+          name: cloudflare-api-token
+          key: CF_API_TOKEN
+
+  # Certificate storage - persist certificates across pod restarts
+  persistence:
+    enabled: true
+    name: traefik-certs
+    storageClass: longhorn
+    accessMode: ReadWriteOnce
+    size: 5Gi
+    path: /data
+
+  # Init containers to set up acme.json with correct permissions (chmod 600)
+  initContainers:
+    - name: acme-permissions
+      image: busybox:1.36
+      command:
+        - sh
+        - -c
+        - |
+          touch /data/acme.json
+          chmod 600 /data/acme.json
+          chown 65532:65532 /data/acme.json
+      volumeMounts:
+        - name: traefik-certs
+          mountPath: /data
+
+  # Additional Traefik configuration arguments
+  additionalArguments:
+    # Enable Let's Encrypt certificate resolver
+    - --certificatesresolvers.letsencrypt.acme.dnschallenge=true
+    - --certificatesresolvers.letsencrypt.acme.dnschallenge.provider=cloudflare
+    - --certificatesresolvers.letsencrypt.acme.email=admin@openlakes.dev
+    - --certificatesresolvers.letsencrypt.acme.storage=/data/acme.json
+    # Use Let's Encrypt staging for testing, switch to production when ready
+    # - --certificatesresolvers.letsencrypt.acme.caserver=https://acme-staging-v02.api.letsencrypt.org/directory
+    # Production Let's Encrypt (rate limited - 50 certs per week per domain)
+    - --certificatesresolvers.letsencrypt.acme.caserver=https://acme-v02.api.letsencrypt.org/directory
+
+postgresql:
+  enabled: true
+  fullnameOverride: infrastructure-postgres
+  image:
+    repository: postgres
+    tag: "15"
+  auth:
+    database: openlakes
+    username: openlakes
+    password: openlakes123
+    postgresPassword: postgres123
+  # Databases to create automatically
+  databases:
+    - airflow                # Airflow orchestration metadata
+    - openmetadata           # OpenMetadata catalog metadata
+    - openmetadata_airflow   # OpenMetadata ingestion pipeline metadata
+    - superset               # Superset analytics metadata
+    - nessie                 # Nessie Iceberg REST Catalog metadata
+  # Increase max connections for multiple services
+  primary:
+    extraEnvVars:
+      - name: POSTGRES_MAX_CONNECTIONS
+        value: "300"
+  persistence:
+    storageClass: longhorn
+    size: 10Gi
+#    limits:
+
+redis:
+  enabled: true
+  fullnameOverride: infrastructure-redis
+  image:
+    repository: redis
+    tag: "7-alpine"
+  persistence:
+    storageClass: longhorn
+    size: 5Gi
+#    limits:
+
+minio:
+  enabled: true
+  fullnameOverride: infrastructure-minio
+  image:
+    repository: minio/minio
+    tag: "latest"
+  # Distributed mode with erasure coding
+  # 4 replicas = EC:2 (2 data shards, 2 parity shards)
+  # Can tolerate up to 2 drive/pod failures
+  replicas: 4
+  auth:
+    rootUser: admin
+    rootPassword: admin123
+  buckets:
+    main: openlakes
+    sparkHistoryPrefix: spark-history/
+  persistence:
+    # Storage per pod (hot tier)
+    # 4 pods × 100Gi = 400Gi total raw storage (EC:2 → ~200Gi effective)
+    storageClass: ""  # Bind to static PVs created from core-config tiers
+    size: 100Gi
+  extraVolumes: []
+  extraVolumeMounts: []
+  service:
+    type: ClusterIP  # Changed from NodePort - access via minio.openlakes.dev
+  # Ingress routing: minio.openlakes.dev → MinIO Console
+#    limits:
+  # Mount NAS cold tier into MinIO pods for lifecycle tiering
+  extraVolumes:
+    - name: minio-cold-nas
+      hostPath:
+        path: /cold-nas
+        type: Directory
+  extraVolumeMounts:
+    - name: minio-cold-nas
+      mountPath: /cold-nas
+
+kafka:
+  enabled: true
+  fullnameOverride: infrastructure-kafka
+  image:
+    repository: apache/kafka
+    tag: "4.0.1"
+  # Optional static cluster ID (leave empty to auto-generate on first start)
+  clusterId: ""
+  kraft:
+    enabled: true
+  controller:
+    replicaCount: 1
+  broker:
+    replicaCount: 1
+  persistence:
+    storageClass: longhorn
+    size: 10Gi
+  # Fix Longhorn volume permissions for Kafka
+  podSecurityContext:
+    fsGroup: 1000  # Kafka group ID
+    # runAsUser set per-container (init=0, kafka=1000)
+  service:
+    type: ClusterIP  # Changed from NodePort - access via kafka.openlakes.dev
+  # Ingress routing: kafka.openlakes.dev → Kafka UI (if enabled)
+#    limits:
+
+# ═══════════════════════════════════════════════════════════════
+# Kafka Schema Registry (Apicurio)
+# ═══════════════════════════════════════════════════════════════
+# Drop-in Schema Registry with Apache 2.0 licensing
+# Backed by KafkaSQL storage (Kafka topic) for full HA semantics
+# Compatible with Confluent REST/compatibility APIs
+schemaRegistry:
+  enabled: true
+  fullnameOverride: infrastructure-schema-registry
+  image:
+    repository: quay.io/apicurio/apicurio-registry-kafkasql
+    tag: "2.6.13.Final"
+  replicas: 1
+  service:
+    type: ClusterIP
+    port: 8081
+  kafka:
+    # Uses global.services.kafka.bootstrapServers by default (set in template)
+    # Override here for custom Kafka cluster
+    bootstrapServers: ""
+    topic: "apicurio-registry-storage"
+    replicationFactor: 1
+  compatibility: BACKWARD
+  loggingLevel: INFO
+  resources:
+    requests:
+      memory: "512Mi"
+      cpu: "250m"
+    limits:
+      memory: "1Gi"
+      cpu: "500m"
+
+opensearch:
+  enabled: true
+  image: opensearchproject/opensearch
+  tag: "2.11.0"
+  replicas: 1
+  clusterName: opensearch-cluster
+  discoveryType: single-node
+  security:
+    disabled: true
+  storageClass: longhorn
+  storageSize: 10Gi
+  javaOpts: "-Xms2g -Xmx2g"
+  resources:
+    requests:
+      cpu: 500m
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+#      cpu: 1000m
+#      memory: 2Gi
+#    javaOpts:
+#      xms: 512m
+#      xmx: 512m
+
+nessie:
+  enabled: true
+  fullnameOverride: infrastructure-nessie
+  image:
+    repository: ghcr.io/projectnessie/nessie
+    tag: "0.77.1"
+  replicas: 1
+  versionStore:
+    type: JDBC
+    jdbc:
+      # PostgreSQL host - uses global.services.postgresql.host by default
+      # Override url to use a custom PostgreSQL instance
+      url: ""  # Empty = use global.services.postgresql (set in template)
+      username: openlakes
+      password: openlakes123
+      database: nessie
+  service:
+    type: ClusterIP  # Access via nessie.openlakes.dev
+  # Ingress routing: nessie.openlakes.dev → Nessie REST API
+  resources:
+    requests:
+#      cpu: 500m
+#      memory: 512Mi
+#    limits:
+#      cpu: 2000m
+#      memory: 2Gi
+
+# ═══════════════════════════════════════════════════════════════
+# Alluxio - Official Helm Chart Configuration
+# ═══════════════════════════════════════════════════════════════
+# Docs: https://docs.alluxio.io/os/user/stable/en/kubernetes/Install-Alluxio-On-Kubernetes.html
+# Chart: https://github.com/Alluxio/alluxio/tree/master-2.x/integration/kubernetes/helm-chart/alluxio
+#
+# Provides transparent caching between Spark and MinIO
+# Hot Tier: NVMe local storage (sub-millisecond)
+# Warm Tier: MinIO distributed (millisecond)
+# Cold Tier: Archive storage (seconds)
+alluxio:
+  enabled: false  # Enable via storage configuration wizard
+
+  # Image configuration
+  image: alluxio/alluxio
+  imageTag: "2.9.3"
+  imagePullPolicy: IfNotPresent
+
+  # Alluxio properties (for alluxio-site.properties)
+  # See: https://docs.alluxio.io/os/user/stable/en/reference/Properties-List.html
+  properties:
+    # ═══════════════════════════════════════════════════════════
+    # Master Configuration
+    # ═══════════════════════════════════════════════════════════
+    alluxio.master.hostname: infrastructure-alluxio-master
+    alluxio.master.mount.table.root.ufs: s3a://openlakes/
+
+    # ═══════════════════════════════════════════════════════════
+    # S3A Understore (MinIO warm/cold tiers)
+    # ═══════════════════════════════════════════════════════════
+    alluxio.underfs.s3.endpoint: http://infrastructure-minio:9000
+    alluxio.underfs.s3.disable.dns.buckets: true
+    s3a.access.key: admin
+    s3a.secret.key: admin123
+
+    # ═══════════════════════════════════════════════════════════
+    # Tiered Storage Configuration (Hot Tier)
+    # ═══════════════════════════════════════════════════════════
+    alluxio.worker.tieredstore.levels: "2"
+
+    # Level 0: Memory cache (16GB per worker)
+    alluxio.worker.tieredstore.level0.alias: MEM
+    alluxio.worker.tieredstore.level0.dirs.path: /dev/shm
+    alluxio.worker.tieredstore.level0.dirs.quota: 16GB
+    alluxio.worker.tieredstore.level0.watermark.high.ratio: "0.95"
+    alluxio.worker.tieredstore.level0.watermark.low.ratio: "0.7"
+
+    # Level 1: SSD cache (uses /alluxio directory on all nodes)
+    alluxio.worker.tieredstore.level1.alias: SSD
+    alluxio.worker.tieredstore.level1.dirs.path: /alluxio
+    alluxio.worker.tieredstore.level1.dirs.quota: 150GB  # Set by storage configuration
+    alluxio.worker.tieredstore.level1.watermark.high.ratio: "0.95"
+    alluxio.worker.tieredstore.level1.watermark.low.ratio: "0.7"
+
+    # ═══════════════════════════════════════════════════════════
+    # Block Annotation Policy (Alluxio 2.3.0+)
+    # ═══════════════════════════════════════════════════════════
+    # LRUAnnotator: Least recently used blocks evicted first
+    # Most recently accessed data stays in cache
+    alluxio.worker.block.annotator.class: alluxio.worker.block.annotator.LRUAnnotator
+    alluxio.worker.tieredstore.free.ahead.bytes: 128MB
+
+    # ═══════════════════════════════════════════════════════════
+    # Caching Behavior
+    # ═══════════════════════════════════════════════════════════
+    # CACHE: Always cache data on read (passive caching)
+    alluxio.user.file.readtype.default: CACHE
+
+    # ASYNC_THROUGH: Write to cache first, async persist to MinIO (write-back cache)
+    # This provides better write performance by not blocking on MinIO writes
+    alluxio.user.file.writetype.default: ASYNC_THROUGH
+
+    # Enable passive caching (automatic cache on read)
+    alluxio.user.file.passive.cache.enabled: "true"
+
+    # ═══════════════════════════════════════════════════════════
+    # Performance Tuning
+    # ═══════════════════════════════════════════════════════════
+    alluxio.user.block.size.bytes.default: 128MB
+    alluxio.user.streaming.reader.chunk.size.bytes: 4MB
+    alluxio.user.streaming.writer.chunk.size.bytes: 4MB
+
+    # Short-circuit reads (when Spark and Alluxio are co-located)
+    alluxio.user.short.circuit.enabled: "true"
+    alluxio.user.block.read.metrics.enabled: "true"
+
+    # Metadata sync with MinIO
+    alluxio.user.file.metadata.sync.interval: 30s
+    alluxio.user.file.metadata.load.type: ONCE
+
+  # ═══════════════════════════════════════════════════════════
+  # Master Deployment
+  # ═══════════════════════════════════════════════════════════
+  master:
+    enabled: true
+    count: 1
+
+    # Use StatefulSet for master (maintains state)
+    # Managed by official Helm chart
+
+    resources:
+      requests:
+        cpu: 500m
+        memory: 4Gi
+      limits:
+        cpu: 2
+        memory: 8Gi
+
+    # Journal storage (metadata persistence)
+    javaOptions: "-Xmx4g -Xms4g"
+
+  # ═══════════════════════════════════════════════════════════
+  # Worker Deployment (DaemonSet on ETL nodes)
+  # ═══════════════════════════════════════════════════════════
+  worker:
+    enabled: true
+
+    # Node affinity - deploy only on ETL nodes
+    # Label nodes with: kubectl label nodes <node> openlakes.io/etl-node=true
+    nodeSelector:
+      openlakes.io/etl-node: "true"
+
+    # Host networking for performance (short-circuit reads)
+    hostNetwork: true
+    hostPID: true
+
+    resources:
+      requests:
+        cpu: 1
+        memory: 8Gi
+      limits:
+        cpu: 4
+        memory: 16Gi
+
+    javaOptions: "-Xmx8g -Xms8g"
+
+    # Tiered storage volumes
+    tieredstore:
+      levels:
+      # Level 0: Memory (emptyDir with Memory medium)
+      - level: 0
+        alias: MEM
+        mediumtype: Memory
+        path: /dev/shm
+        type: emptyDir
+        quota: 16GB
+        high: 0.95
+        low: 0.7
+
+      # Level 1: SSD (hostPath to /alluxio on each node)
+      - level: 1
+        alias: SSD
+        mediumtype: SSD
+        path: /alluxio
+        type: hostPath
+        quota: 150GB  # Set by storage configuration
+        high: 0.95
+        low: 0.7
+
+  # ═══════════════════════════════════════════════════════════
+  # Journal Configuration (Master metadata persistence)
+  # ═══════════════════════════════════════════════════════════
+  journal:
+    # Use embedded journal (local storage)
+    type: "UFS"
+    ufsType: "local"
+    folder: /journal
+
+    # Journal volume size
+    size: 10Gi
+    storageClass: longhorn
+
+  # ═══════════════════════════════════════════════════════════
+  # Monitoring & Metrics
+  # ═══════════════════════════════════════════════════════════
+  metrics:
+    enabled: true
+    prometheusPort: 9090
+
+  # ═══════════════════════════════════════════════════════════
+  # Short-Circuit Configuration
+  # ═══════════════════════════════════════════════════════════
+  # Enable when Spark executors and Alluxio workers are co-located
+  shortCircuit:
+    enabled: true
+    policy: local
+
+  # ═══════════════════════════════════════════════════════════
+  # FUSE (optional - for POSIX filesystem access)
+  # ═══════════════════════════════════════════════════════════
+  fuse:
+    enabled: false  # Enable if you need POSIX filesystem access
+
+  # ═══════════════════════════════════════════════════════════
+  # Proxy (REST API - optional)
+  # ═══════════════════════════════════════════════════════════
+  # Provides REST API access to Alluxio
+  # Not required for Spark (uses native alluxio:// protocol)
+  proxy:
+    enabled: false  # Enable only if REST API access is needed
+
+# Storage tier configuration (managed by configure-storage.sh)
+storage:
+  # ETL node configuration
+  # ETL nodes run Alluxio workers, MinIO replicas, and Spark executors
+  # Set by configure-storage.sh wizard based on node selection
+  etlNodes: []  # Example: ["node1", "node2", "node3"]
+
+  # Hot tier: Alluxio cache on NVMe storage (ETL nodes only)
+  hot:
+    enabled: false
+    sizePerNode: "150Gi"  # Configured by wizard (25% of smallest ETL node)
+
+  # Warm tier: Distributed MinIO with erasure coding
+  warm:
+    enabled: true
+    mode: "standalone"  # or "distributed" for 4+ nodes with erasure coding
+    replicas: 1
+    sizePerNode: "180Gi"  # Configured by wizard
+
+    # Lifecycle policies for automatic tiering to cold storage
+    lifecycle:
+      enabled: false
+      rules:
+        # Move data older than 90 days to cold tier
+        - id: "archive-old-data"
+          prefix: "data/"
+          transition:
+            days: 90
+            storageClass: "COLD"
+
+        # Delete temporary data after 7 days
+        - id: "cleanup-temp"
+          prefix: "temp/"
+          expiration:
+            days: 7
+
+  # Cold tier: Archive storage (NFS, local, or S3)
+  cold:
+    enabled: false
+    type: "local"  # local, nfs, s3
+    capacity: "500Gi"
+
+# ═══════════════════════════════════════════════════════════════
+# Dashboard - Service Links UI
+# ═══════════════════════════════════════════════════════════════
+# Material UI dashboard providing quick access to all service UIs
+notebooks:
+  bucket: openlakes-notebooks
+  prefixes:
+    shared: shared
+    workspace: workspace
+    published: published
+    artifacts: artifacts
+  versioning: true
+
+dashboard:
+  enabled: true
+  fullnameOverride: infrastructure-dashboard
+  replicaCount: 1
+
+  image:
+    repository: ghcr.io/openlakes/core/openlakes-dashboard
+    tag: "1.0.0"
+    pullPolicy: Always
+
+  # Environment variables for service URL configuration
+  env:
+    protocol: "https"
+    domain: "openlakes.dev"
+    port: "443"
+    showCredentials: "true"
+    version: "v1.0.0"
+    servicesB64: ""
+
+  service:
+    type: LoadBalancer
+    port: 80
+    # nodePort: 30300  # Uncomment for NodePort type
+
+  resources:
+    requests:
+      memory: "64Mi"
+      cpu: "50m"
+    limits:
+      memory: "128Mi"
+      cpu: "200m"

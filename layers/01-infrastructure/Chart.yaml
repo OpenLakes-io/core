@@ -1,0 +1,26 @@
+apiVersion: v2
+name: openlakes-infrastructure
+version: 1.0.0
+description: OpenLakes infrastructure layer - databases, storage, and messaging
+type: application
+
+dependencies:
+  # NOTE: Longhorn has been moved to Layer 00 (Storage) - the foundational storage layer
+  # Layer 00 must be deployed FIRST before this layer can provision persistent volumes
+
+  # Traefik Ingress Controller - host-based routing for all OpenLakes services
+  # Provides single entry point on port 80 with domain-based routing
+  # minio.openlakes.local, metadata.openlakes.local, superset.openlakes.local, etc.
+  - name: traefik
+    version: "33.2.1"
+    repository: "https://traefik.github.io/charts"
+    condition: traefik.enabled
+
+  # Official Alluxio Helm chart (maintained locally, synced from upstream)
+  # Source: https://github.com/Alluxio/alluxio/tree/master-2.x/integration/kubernetes/helm-chart/alluxio
+  # OpenLakes maintains its own version and syncs with official repo when necessary
+  - name: alluxio
+    version: "0.6.54"
+    repository: "file://./charts/alluxio"
+    condition: alluxio.enabled
+

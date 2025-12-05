@@ -1,0 +1,218 @@
+{{- if .Values.spark.enabled }}
+{{- $minioEndpoint := .Values.spark.s3.endpoint | default .Values.global.services.minio.endpoint }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.spark.fullnameOverride }}-config
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    layer: compute
+    {{- with .Values.global.tenant }}
+    openlakes.io/tenant: {{ . }}
+    {{- end }}
+data:
+  spark-defaults.conf: |
+    # Default Spark configuration
+    spark.master                     spark://{{ .Values.spark.fullnameOverride }}-master:7077
+    spark.submit.deployMode           client
+
+    # Kubernetes configuration
+    spark.kubernetes.namespace       {{ .Values.global.namespace }}
+    spark.kubernetes.authenticate.driver.serviceAccountName {{ .Values.spark.fullnameOverride }}-sa
+    spark.kubernetes.authenticate.executor.serviceAccountName {{ .Values.spark.fullnameOverride }}-sa
+
+    # Container image
+    spark.kubernetes.container.image {{ .Values.spark.image.repository }}:{{ .Values.spark.image.tag }}
+    spark.kubernetes.container.image.pullPolicy {{ .Values.spark.image.pullPolicy }}
+
+    # Resource allocation
+    spark.executor.instances         {{ .Values.spark.executor.instances }}
+    spark.executor.memory            {{ .Values.spark.executor.memory }}
+    spark.executor.cores             {{ .Values.spark.executor.cores }}
+    spark.driver.memory              {{ .Values.spark.driver.memory }}
+    spark.driver.cores               {{ .Values.spark.driver.cores }}
+
+    # Network configuration
+    spark.driver.host                {{ .Values.spark.fullnameOverride }}-master
+    spark.driver.port                7077
+    spark.ui.port                    4040
+    spark.blockManager.port          7079
+
+    # History Server (if enabled)
+    {{- if .Values.spark.historyServer.enabled }}
+    spark.eventLog.enabled           true
+    spark.eventLog.dir               {{ .Values.spark.historyServer.eventLogDir }}
+    spark.history.fs.logDirectory    {{ .Values.spark.historyServer.eventLogDir }}
+    {{- end }}
+
+    # SQL configuration
+    spark.sql.warehouse.dir          /opt/spark-warehouse
+    spark.sql.catalogImplementation  hive
+
+    # Integration with other services
+    {{- if .Values.spark.hive.enabled }}
+    spark.sql.hive.metastore.uris   {{ .Values.spark.hive.metastoreUris }}
+    {{- end }}
+
+    # S3/MinIO configuration (for data lake access)
+    {{- if .Values.spark.s3.enabled }}
+    spark.hadoop.fs.s3a.endpoint    {{ $minioEndpoint }}
+    spark.hadoop.fs.s3a.access.key  {{ .Values.spark.s3.accessKey }}
+    spark.hadoop.fs.s3a.secret.key  {{ .Values.spark.s3.secretKey }}
+    spark.hadoop.fs.s3a.path.style.access true
+    spark.hadoop.fs.s3a.impl        org.apache.hadoop.fs.s3a.S3AFileSystem
+    spark.hadoop.fs.s3a.connection.ssl.enabled false
+    # Connection timeouts - must be integers (ms), not duration strings like "60s"
+    spark.hadoop.fs.s3a.connection.establish.timeout 60000
+    spark.hadoop.fs.s3a.connection.timeout 200000
+    spark.hadoop.fs.s3a.socket.send.buffer 8192
+    spark.hadoop.fs.s3a.socket.recv.buffer 8192
+    spark.hadoop.fs.s3a.attempts.maximum 3
+    spark.hadoop.fs.s3a.retry.limit 3
+    spark.hadoop.fs.s3a.retry.interval 500
+    spark.hadoop.fs.s3a.connection.request.timeout 60000
+    spark.hadoop.fs.s3a.read.timeout 200000
+    spark.hadoop.fs.s3a.write.timeout 200000
+    {{- end }}
+
+    # Performance tuning
+    spark.serializer                 org.apache.spark.serializer.KryoSerializer
+    spark.kryoserializer.buffer.max  256m
+    spark.sql.adaptive.enabled       true
+    spark.sql.adaptive.coalescePartitions.enabled true
+    spark.sql.adaptive.skewJoin.enabled true
+
+    # Additional custom configurations
+    {{- range $key, $value := .Values.spark.sparkDefaults }}
+    {{ $key }}                       {{ $value }}
+    {{- end }}
+
+    # ════════════════════════════════════════════════════════════════
+    # OpenMetadata Lineage Integration (OpenLakes v1.0.0)
+    # ════════════════════════════════════════════════════════════════
+    # This configuration enables automated data lineage capture for all
+    # Spark jobs executed in the OpenLakes cluster. Lineage data is sent
+    # to OpenMetadata using the openlakesbot service account via OpenLineage.
+    {{- if .Values.spark.openmetadata.enabled }}
+
+    # Core Lineage Configuration - OpenLineage Spark Agent
+    spark.jars                                      /opt/spark/jars/openlineage-spark_2.13-1.40.1.jar,/opt/spark/jars/openlineage-openmetadata-transporter-1.35.jar
+    spark.extraListeners                           io.openlineage.spark.agent.OpenLineageSparkListener
+
+    # OpenLineage Transport Configuration for OpenMetadata
+    # Using the openmetadata-transporter library for native OpenMetadata integration
+    spark.openlineage.transport.type               openMetadata
+    spark.openlineage.transport.url                {{ .Values.spark.openmetadata.server.protocol }}://{{ .Values.spark.openmetadata.server.host }}:{{ .Values.spark.openmetadata.server.port }}/api/v1
+    spark.openlineage.transport.timeout            {{ .Values.spark.openmetadata.timeout }}
+
+    # Pipeline Configuration
+    # Note: 'compute-spark' pipeline will be created in OpenMetadata if it doesn't exist
+    spark.openlineage.transport.pipelineName       {{ .Values.spark.openmetadata.defaultPipelineName }}
+    spark.openlineage.transport.pipelineDescription {{ .Values.spark.openmetadata.pipelineDescription }}
+    spark.openlineage.transport.pipelineServiceUrl {{ .Values.spark.openmetadata.server.protocol }}://{{ .Values.spark.openmetadata.server.host }}:{{ .Values.spark.openmetadata.server.port }}
+
+    # Authentication via openlakesbot JWT Token (using API key auth type)
+    # Token is injected via environment variable SPARK_OPENMETADATA_JWT_TOKEN
+    # The actual token value is set via Kubernetes secret reference in deployment
+    spark.openlineage.transport.auth.type          api_key
+    # spark.openlineage.transport.auth.apiKey will be set dynamically via SPARK_SUBMIT_OPTS
+    {{- end }}
+
+  log4j2.properties: |
+    # Set root logger level to WARN and its appenders to console
+    rootLogger.level = WARN
+    rootLogger.appenderRef.stdout.ref = console
+
+    # Console appender configuration
+    appender.console.type = Console
+    appender.console.name = console
+    appender.console.target = SYSTEM_OUT
+    appender.console.layout.type = PatternLayout
+    appender.console.layout.pattern = %d{yy/MM/dd HH:mm:ss} %p %c{1}: %m%n
+
+    # Settings for specific loggers
+    logger.spark.name = org.apache.spark
+    logger.spark.level = {{ .Values.spark.logLevel }}
+
+    logger.jetty.name = org.eclipse.jetty
+    logger.jetty.level = WARN
+
+    logger.hadoop.name = org.apache.hadoop
+    logger.hadoop.level = WARN
+
+    logger.hive.name = org.apache.hadoop.hive
+    logger.hive.level = WARN
+
+  spark-env.sh: |
+    #!/usr/bin/env bash
+
+    # Set Spark environment variables
+    export SPARK_MASTER_HOST=0.0.0.0
+    export SPARK_MASTER_PORT=7077
+    export SPARK_MASTER_WEBUI_PORT=8080
+
+    export SPARK_WORKER_PORT=7078
+    export SPARK_WORKER_WEBUI_PORT=8081
+    export SPARK_WORKER_DIR=/opt/spark/work
+
+    export SPARK_LOG_DIR=/opt/spark/logs
+    export SPARK_PID_DIR=/tmp
+
+    # Java options
+    export SPARK_DAEMON_JAVA_OPTS="-Dspark.deploy.recoveryMode=FILESYSTEM -Dspark.deploy.recoveryDirectory=/opt/spark/recovery"
+
+    # Additional environment variables
+    {{- range $key, $value := .Values.spark.environment }}
+    export {{ $key }}={{ $value }}
+    {{- end }}
+
+  metrics.properties: |
+    # ════════════════════════════════════════════════════════════════
+    # Spark Metrics Configuration - Prometheus Integration
+    # ════════════════════════════════════════════════════════════════
+    # Enables Prometheus metrics exposition for monitoring via Layer 08
+    #
+    # Metrics exposed:
+    #   - Master: application stats, worker count, resource allocation
+    #   - Worker: executor stats, memory usage, CPU utilization
+    #   - Driver: job metrics, stage completion, task execution
+    #   - Executor: shuffle metrics, GC stats, memory pools
+    #
+    # Endpoints:
+    #   Master:  http://<spark-master>:8080/metrics/prometheus
+    #   Worker:  http://<spark-worker>:8081/metrics/prometheus
+    #   Driver:  http://<driver>:4040/metrics/prometheus
+    #
+    # Reference: https://spark.apache.org/docs/latest/monitoring.html#metrics
+
+    # Enable metrics for all Spark components
+    *.sink.prometheus.class=org.apache.spark.metrics.sink.PrometheusServlet
+    *.sink.prometheus.path=/metrics/prometheus
+    *.source.jvm.class=org.apache.spark.metrics.source.JvmSource
+
+    # Master metrics configuration
+    master.sink.prometheus.class=org.apache.spark.metrics.sink.PrometheusServlet
+    master.sink.prometheus.path=/metrics/prometheus
+    master.source.jvm.class=org.apache.spark.metrics.source.JvmSource
+
+    # Worker metrics configuration
+    worker.sink.prometheus.class=org.apache.spark.metrics.sink.PrometheusServlet
+    worker.sink.prometheus.path=/metrics/prometheus
+    worker.source.jvm.class=org.apache.spark.metrics.source.JvmSource
+
+    # Driver metrics configuration (for applications)
+    driver.sink.prometheus.class=org.apache.spark.metrics.sink.PrometheusServlet
+    driver.sink.prometheus.path=/metrics/prometheus
+    driver.source.jvm.class=org.apache.spark.metrics.source.JvmSource
+
+    # Executor metrics configuration
+    executor.sink.prometheus.class=org.apache.spark.metrics.sink.PrometheusServlet
+    executor.sink.prometheus.path=/metrics/prometheus
+    executor.source.jvm.class=org.apache.spark.metrics.source.JvmSource
+
+    # Application metrics configuration
+    applications.sink.prometheus.class=org.apache.spark.metrics.sink.PrometheusServlet
+    applications.sink.prometheus.path=/metrics/prometheus
+{{- end }}

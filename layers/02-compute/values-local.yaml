@@ -1,0 +1,31 @@
+# ════════════════════════════════════════════════════════════════
+# OpenLakes Layer 02 - Compute
+# LOCAL Development Environment Overrides
+# ════════════════════════════════════════════════════════════════
+#
+# Purpose: Fast local iteration with Rancher Desktop
+#
+# Usage:
+#   ./deploy-openlakes.sh --env local
+#   # OR
+#   helm upgrade --install 02-compute ./layers/02-compute \
+#     --namespace openlakes \
+#     -f ./layers/02-compute/values.yaml \
+#     -f ./layers/02-compute/values-local.yaml
+#
+# Workflow:
+#   OpenLakes Core uses vanilla Apache Spark
+#   For S3A support, use --packages at runtime (see examples/)
+#   For automated lineage, use OpenLakes Pier instead of Core
+#
+# ════════════════════════════════════════════════════════════════
+
+spark:
+  image:
+    # Local development uses custom Spark image with Nessie + OpenMetadata support
+    repository: spark
+    tag: "local"
+    pullPolicy: Never  # Use local image only, don't pull from registry
+
+  # Optional: Enable debug logging for development
+  # logLevel: DEBUG

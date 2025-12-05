@@ -1,0 +1,161 @@
+name: Integration Tests
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  l1-deployment-tests:
+    name: L1 - Deployment & Connectivity Tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Kubernetes (kind)
+        uses: helm/kind-action@v1.8.0
+        with:
+          cluster_name: openlakes-test
+          node_image: kindest/node:v1.28.0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.13.0'
+
+      - name: Deploy OpenLakes Core
+        run: |
+          ./deploy-openlakes.sh --env local
+        timeout-minutes: 15
+
+      - name: Run L1 Deployment Test
+        run: |
+          ./tests/01-deployment-test.sh
+
+      - name: Run L1 Connectivity Test
+        run: |
+          ./tests/02-connectivity-test.sh
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: l1-test-results
+          path: tests/results/
+
+      - name: Collect logs on failure
+        if: failure()
+        run: |
+          kubectl get pods -n openlakes
+          kubectl describe pods -n openlakes
+          kubectl logs --all-containers=true -n openlakes --tail=100
+
+  l2-integration-tests:
+    name: L2 - Integration Tests (Backend Configs)
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    needs: l1-deployment-tests
+
+    strategy:
+      matrix:
+        test:
+          - name: "Spark → MinIO"
+            script: "spark-to-minio-test.py"
+            type: "python"
+          - name: "Trino → PostgreSQL"
+            script: "trino-to-postgres-test.sql"
+            type: "sql"
+          - name: "Spark → PostgreSQL"
+            script: "spark-to-postgres-test.py"
+            type: "python"
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Kubernetes (kind)
+        uses: helm/kind-action@v1.8.0
+        with:
+          cluster_name: openlakes-test
+          node_image: kindest/node:v1.28.0
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.13.0'
+
+      - name: Deploy OpenLakes Core
+        run: |
+          ./deploy-openlakes.sh --env local
+        timeout-minutes: 15
+
+      - name: Run L2 Test - ${{ matrix.test.name }}
+        run: |
+          if [ "${{ matrix.test.type }}" = "python" ]; then
+            kubectl cp tests/integration/${{ matrix.test.script }} \\
+              openlakes/compute-spark-master:/tmp/${{ matrix.test.script }}
+
+            kubectl exec -n openlakes deployment/compute-spark-master -- \\
+              spark-submit \\
+              --packages org.apache.hadoop:hadoop-aws:3.4.1,software.amazon.awssdk:bundle:2.29.27,org.postgresql:postgresql:42.7.1 \\
+              /tmp/${{ matrix.test.script }}
+
+          elif [ "${{ matrix.test.type }}" = "sql" ]; then
+            kubectl exec -n openlakes deployment/compute-trino -- \\
+              trino --file /tests/integration/${{ matrix.test.script }}
+          fi
+
+      - name: Upload test results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: l2-test-results-${{ matrix.test.name }}
+          path: tests/results/
+
+  version-compatibility:
+    name: Version Compatibility Matrix
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    strategy:
+      matrix:
+        kubernetes:
+          - v1.27.0
+          - v1.28.0
+          - v1.29.0
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Set up Kubernetes (kind) - ${{ matrix.kubernetes }}
+        uses: helm/kind-action@v1.8.0
+        with:
+          cluster_name: openlakes-test
+          node_image: kindest/node:${{ matrix.kubernetes }}
+
+      - name: Install Helm
+        uses: azure/setup-helm@v3
+        with:
+          version: '3.13.0'
+
+      - name: Deploy OpenLakes Core
+        run: |
+          ./deploy-openlakes.sh --env local
+        timeout-minutes: 15
+
+      - name: Run L1 Tests
+        run: |
+          ./tests/01-deployment-test.sh
+
+      - name: Upload compatibility results
+        if: always()
+        uses: actions/upload-artifact@v3
+        with:
+          name: compatibility-k8s-${{ matrix.kubernetes }}
+          path: tests/results/

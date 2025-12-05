@@ -1,0 +1,52 @@
+{{- if .Values.global.networking.enableIngressRoutes }}
+{{- $dashboardName := .Values.dashboard.fullnameOverride | default "infrastructure-dashboard" }}
+---
+# ═══════════════════════════════════════════════════════════════
+# OpenLakes Dashboard - HTTP Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access Dashboard at: http://dashboard.openlakes.dev
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ $dashboardName }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openlakes-dashboard
+    layer: infrastructure
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`dashboard.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: {{ $dashboardName }}
+          port: 80  # Dashboard service port
+
+---
+# ═══════════════════════════════════════════════════════════════
+# OpenLakes Dashboard - HTTPS Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access Dashboard at: https://dashboard.openlakes.dev
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: {{ $dashboardName }}-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openlakes-dashboard
+    layer: infrastructure
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`dashboard.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: {{ $dashboardName }}
+          port: 80
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: dashboard.{{ .Values.global.networking.domain }}
+{{- end }}

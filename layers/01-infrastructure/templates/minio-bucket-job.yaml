@@ -1,0 +1,118 @@
+{{- if and .Values.minio.enabled .Values.global.namespace }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: infrastructure-minio-buckets
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: minio-bucket-init
+    layer: infrastructure
+spec:
+  backoffLimit: 3
+  template:
+    metadata:
+      labels:
+        app: minio-bucket-init
+    spec:
+      restartPolicy: OnFailure
+      containers:
+      - name: create-buckets
+        image: minio/mc:latest
+        env:
+        - name: MINIO_ENDPOINT
+          value: "http://{{ .Values.minio.fullnameOverride }}:9000"
+        - name: MINIO_ROOT_USER
+          value: {{ .Values.minio.auth.rootUser | quote }}
+        - name: MINIO_ROOT_PASSWORD
+          value: {{ .Values.minio.auth.rootPassword | quote }}
+        command:
+        - /bin/sh
+        - -c
+        - |
+          set -euo pipefail
+          alias mc='/usr/bin/mc --quiet'
+
+          RETRY_MAX="${RETRY_MAX:-10}"
+          RETRY_DELAY="${RETRY_DELAY:-2}"
+
+          retry_cmd() {
+            local desc="$1"
+            shift
+            local attempt=1
+            while true; do
+              if "$@"; then
+                return 0
+              fi
+              if [ "${attempt}" -ge "${RETRY_MAX}" ]; then
+                echo "ERROR: ${desc} failed after ${RETRY_MAX} attempts" >&2
+                return 1
+              fi
+              attempt=$((attempt + 1))
+              echo "Retrying ${desc} (attempt ${attempt}/${RETRY_MAX}) after ${RETRY_DELAY}s..."
+              sleep "${RETRY_DELAY}"
+            done
+          }
+
+          echo "Waiting for MinIO to be reachable at ${MINIO_ENDPOINT}..."
+          for i in $(seq 1 60); do
+            if mc alias set minio "${MINIO_ENDPOINT}" "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}" >/dev/null 2>&1; then
+              break
+            fi
+            sleep 2
+          done
+
+          # Ensure alias works
+          mc ls minio >/dev/null
+
+          tmp_keep="$(mktemp)"
+          truncate -s 0 "${tmp_keep}"
+
+          create_bucket() {
+            local b="$1"
+            if mc ls "minio/${b}" >/dev/null 2>&1; then
+              echo "Bucket '${b}' already exists"
+            else
+              echo "Creating bucket '${b}'..."
+              retry_cmd "create bucket ${b}" /bin/sh -c "mc mb \"minio/${b}\" >/dev/null 2>&1"
+              sleep 1
+            fi
+          }
+
+          ensure_placeholder() {
+            local target="$1"
+            retry_cmd "write placeholder ${target}" /bin/sh -c "mc cp \"${tmp_keep}\" \"${target}\" >/dev/null 2>&1"
+          }
+
+          # Required primary bucket
+          create_bucket "{{ .Values.minio.buckets.main | default "openlakes" }}"
+
+          {{- $sparkPrefix := .Values.minio.buckets.sparkHistoryPrefix | default "spark-history/" }}
+          # Spark history prefix
+          ensure_placeholder "minio/{{ .Values.minio.buckets.main | default "openlakes" }}/{{ trimSuffix "/" $sparkPrefix }}/.keep"
+
+          # Notebook bucket
+          {{- if .Values.notebooks.bucket }}
+          create_bucket "{{ .Values.notebooks.bucket }}"
+          {{- if eq (toString .Values.notebooks.versioning) "true" }}
+          echo "Enabling versioning for {{ .Values.notebooks.bucket }}..."
+          retry_cmd "enable versioning for {{ .Values.notebooks.bucket }}" /bin/sh -c "mc version enable \"minio/{{ .Values.notebooks.bucket }}\" >/dev/null 2>&1"
+          {{- end }}
+          {{- $nb := .Values.notebooks }}
+          {{- if $nb.prefixes.shared }}
+          ensure_placeholder "minio/{{ $nb.bucket }}/{{ trimSuffix "/" $nb.prefixes.shared }}/.keep"
+          {{- end }}
+          {{- if $nb.prefixes.workspace }}
+          ensure_placeholder "minio/{{ $nb.bucket }}/{{ trimSuffix "/" $nb.prefixes.workspace }}/.keep"
+          {{- end }}
+          {{- if $nb.prefixes.published }}
+          ensure_placeholder "minio/{{ $nb.bucket }}/{{ trimSuffix "/" $nb.prefixes.published }}/.keep"
+          {{- end }}
+          {{- if $nb.prefixes.artifacts }}
+          ensure_placeholder "minio/{{ $nb.bucket }}/{{ trimSuffix "/" $nb.prefixes.artifacts }}/.keep"
+          {{- end }}
+          rm -f "${tmp_keep}"
+          {{- end }}
+
+          echo "Bucket initialization complete"
+{{- end }}

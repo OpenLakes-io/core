@@ -1,0 +1,194 @@
+{
+  "dashboard": {
+    "title": "OpenLakes - Compute Performance",
+    "tags": ["openlakes", "compute", "spark", "trino"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 1},
+        "type": "row",
+        "title": "Spark - Distributed Processing"
+      },
+      {
+        "id": 2,
+        "gridPos": {"x": 0, "y": 1, "w": 6, "h": 4},
+        "type": "stat",
+        "title": "Spark Workers",
+        "targets": [{
+          "expr": "count(up{job=\"openlakes-spark-worker\"})",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "gridPos": {"x": 6, "y": 1, "w": 6, "h": 4},
+        "type": "stat",
+        "title": "Spark Applications Running",
+        "targets": [{
+          "expr": "spark_master_apps_running",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"},
+                {"value": 5, "color": "yellow"},
+                {"value": 10, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "gridPos": {"x": 12, "y": 1, "w": 6, "h": 4},
+        "type": "stat",
+        "title": "Spark CPU Cores Available",
+        "targets": [{
+          "expr": "sum(spark_worker_cores_free)",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "gridPos": {"x": 18, "y": 1, "w": 6, "h": 4},
+        "type": "stat",
+        "title": "Spark Memory Available",
+        "targets": [{
+          "expr": "sum(spark_worker_memory_free_bytes)",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 6,
+        "gridPos": {"x": 0, "y": 5, "w": 12, "h": 8},
+        "type": "graph",
+        "title": "Spark Worker CPU Usage",
+        "targets": [{
+          "expr": "100 * (1 - (spark_worker_cores_free / spark_worker_cores_total))",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }],
+        "yaxes": [
+          {"format": "percent", "label": "CPU %"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 7,
+        "gridPos": {"x": 12, "y": 5, "w": 12, "h": 8},
+        "type": "graph",
+        "title": "Spark Worker Memory Usage",
+        "targets": [{
+          "expr": "100 * (1 - (spark_worker_memory_free_bytes / spark_worker_memory_total_bytes))",
+          "legendFormat": "{{instance}}",
+          "refId": "A"
+        }],
+        "yaxes": [
+          {"format": "percent", "label": "Memory %"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 8,
+        "gridPos": {"x": 0, "y": 13, "w": 12, "h": 1},
+        "type": "row",
+        "title": "Trino - SQL Query Engine"
+      },
+      {
+        "id": 9,
+        "gridPos": {"x": 0, "y": 14, "w": 6, "h": 4},
+        "type": "stat",
+        "title": "Trino Active Workers",
+        "targets": [{
+          "expr": "trino_active_worker_count",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 10,
+        "gridPos": {"x": 6, "y": 14, "w": 6, "h": 4},
+        "type": "stat",
+        "title": "Trino Running Queries",
+        "targets": [{
+          "expr": "trino_running_queries",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"},
+                {"value": 10, "color": "yellow"},
+                {"value": 20, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 11,
+        "gridPos": {"x": 12, "y": 14, "w": 12, "h": 8},
+        "type": "graph",
+        "title": "Trino Query Execution Time",
+        "targets": [{
+          "expr": "rate(trino_execution_time_seconds_sum[5m]) / rate(trino_execution_time_seconds_count[5m])",
+          "legendFormat": "Avg Execution Time",
+          "refId": "A"
+        }],
+        "yaxes": [
+          {"format": "s", "label": "Seconds"},
+          {"format": "short"}
+        ]
+      }
+    ]
+  }
+}

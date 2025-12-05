@@ -1,0 +1,190 @@
+{{- if and .Values.spark.enabled .Values.spark.historyServer.enabled }}
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.spark.fullnameOverride }}-history-server
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark-history-server
+    component: history-server
+    layer: compute
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: spark-history-server
+      component: history-server
+  template:
+    metadata:
+      labels:
+        app: spark-history-server
+        component: history-server
+        layer: compute
+    spec:
+      serviceAccountName: {{ .Values.spark.fullnameOverride }}-sa
+      initContainers:
+      - name: create-s3-bucket
+        image: amazon/aws-cli:2.13.25
+        env:
+        - name: AWS_ACCESS_KEY_ID
+          value: "{{ .Values.spark.s3.accessKey | default .Values.minio.rootUser }}"
+        - name: AWS_SECRET_ACCESS_KEY
+          value: "{{ .Values.spark.s3.secretKey | default .Values.minio.rootPassword }}"
+        - name: AWS_ENDPOINT_URL
+          value: "{{ .Values.spark.s3.endpoint }}"
+        - name: AWS_DEFAULT_REGION
+          value: "us-east-1"
+        - name: AWS_EC2_METADATA_DISABLED
+          value: "true"
+        - name: AWS_S3_FORCE_PATH_STYLE
+          value: "true"
+        command:
+          - /bin/sh
+          - -c
+          - |
+            set -e
+            echo "🪣 Initializing Spark History Server S3 storage..."
+
+            echo "⏳ Waiting for MinIO endpoint to be ready at ${AWS_ENDPOINT_URL}..."
+            ATTEMPTS=0
+            until aws s3api list-buckets --endpoint-url "${AWS_ENDPOINT_URL}" >/dev/null 2>&1; do
+              ATTEMPTS=$((ATTEMPTS+1))
+              if [ "${ATTEMPTS}" -ge 30 ]; then
+                echo "❌ MinIO did not become ready after ${ATTEMPTS} checks"
+                exit 1
+              fi
+              sleep 2
+            done
+            echo "✅ MinIO endpoint is reachable"
+
+            # Extract bucket name from eventLogDir (s3a://bucket/path/ -> bucket)
+            BUCKET_NAME=$(echo "{{ .Values.spark.historyServer.eventLogDir }}" | sed 's|s3a://||' | cut -d'/' -f1)
+            echo "📦 Bucket: ${BUCKET_NAME}"
+
+            # Check if bucket exists, create if not
+            if aws s3 ls "s3://${BUCKET_NAME}" --endpoint-url "${AWS_ENDPOINT_URL}" 2>/dev/null; then
+              echo "✅ Bucket '${BUCKET_NAME}' already exists"
+            else
+              echo "🔨 Creating bucket '${BUCKET_NAME}'..."
+              aws s3 mb "s3://${BUCKET_NAME}" --endpoint-url "${AWS_ENDPOINT_URL}"
+              echo "✅ Bucket '${BUCKET_NAME}' created"
+            fi
+
+            # Create the spark-history prefix/folder
+            echo "📁 Ensuring spark-history/ prefix exists..."
+            aws s3api put-object \
+              --bucket "${BUCKET_NAME}" \
+              --key "spark-history/" \
+              --endpoint-url "${AWS_ENDPOINT_URL}" 2>/dev/null || true
+
+            echo "✅ S3 storage initialized successfully!"
+        resources:
+          requests:
+            memory: "128Mi"
+            cpu: "100m"
+          limits:
+            memory: "256Mi"
+            cpu: "200m"
+      containers:
+      - name: spark-history-server
+        image: {{ .Values.spark.image.repository }}:{{ .Values.spark.image.tag }}
+        imagePullPolicy: {{ .Values.spark.image.pullPolicy }}
+        command:
+          - "/opt/spark/bin/spark-class"
+          - "org.apache.spark.deploy.history.HistoryServer"
+        ports:
+          - name: http
+            containerPort: 18080
+            protocol: TCP
+        env:
+          - name: SPARK_NO_DAEMONIZE
+            value: "true"
+          - name: SPARK_HISTORY_OPTS
+            value: >-
+              -Dspark.history.fs.logDirectory={{ .Values.spark.historyServer.eventLogDir }}
+              -Dspark.history.ui.port=18080
+              -Dspark.hadoop.fs.s3a.endpoint={{ .Values.spark.s3.endpoint }}
+              -Dspark.hadoop.fs.s3a.access.key={{ .Values.spark.s3.accessKey }}
+              -Dspark.hadoop.fs.s3a.secret.key={{ .Values.spark.s3.secretKey }}
+              -Dspark.hadoop.fs.s3a.path.style.access=true
+              -Dspark.hadoop.fs.s3a.impl=org.apache.hadoop.fs.s3a.S3AFileSystem
+              -Dspark.hadoop.fs.s3a.connection.ssl.enabled=false
+        volumeMounts:
+          - name: spark-config
+            mountPath: /opt/spark/conf
+            readOnly: true
+        resources:
+          requests:
+            memory: {{ .Values.spark.historyServer.memory }}
+            cpu: "0.5"
+          limits:
+            memory: {{ .Values.spark.historyServer.memory }}
+            cpu: "1"
+        livenessProbe:
+          httpGet:
+            path: /
+            port: 18080
+          {{- $profile := .Values.spark.historyServer.probeProfile | default "slow" -}}
+          {{- if eq $profile "fast" }}
+          initialDelaySeconds: 15
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+          {{- else if eq $profile "medium" }}
+          initialDelaySeconds: 30
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+          {{- else }}
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 10
+          {{- end }}
+        readinessProbe:
+          httpGet:
+            path: /
+            port: 18080
+          {{- if eq $profile "fast" }}
+          initialDelaySeconds: 10
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 6
+          {{- else if eq $profile "medium" }}
+          initialDelaySeconds: 20
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 6
+          {{- else }}
+          initialDelaySeconds: 40
+          periodSeconds: 5
+          timeoutSeconds: 3
+          failureThreshold: 10
+          {{- end }}
+      volumes:
+        - name: spark-config
+          configMap:
+            name: {{ .Values.spark.fullnameOverride }}-config
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.spark.fullnameOverride }}-history-server
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark-history-server
+    component: history-server
+    layer: compute
+spec:
+  type: NodePort
+  ports:
+    - port: 18080
+      targetPort: 18080
+      nodePort: {{ .Values.spark.historyServer.nodePort }}
+      protocol: TCP
+      name: http
+  selector:
+    app: spark-history-server
+    component: history-server
+{{- end }}

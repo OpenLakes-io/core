@@ -1,0 +1,273 @@
+{{- if .Values.global.networking.enableIngressRoutes }}
+---
+# ═══════════════════════════════════════════════════════════════
+# Trino - Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access Trino UI at: http://trino.openlakes.local
+{{- if .Values.trino.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: compute-trino
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: trino
+    layer: compute
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`trino.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: compute-trino
+          port: 8080  # Trino coordinator UI port
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# StarRocks FE - Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access StarRocks UI at: http://starrocks.openlakes.local
+{{- if .Values.starrocks.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: compute-starrocks
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: starrocks
+    layer: compute
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`starrocks.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: compute-starrocks-fe
+          port: 8030  # StarRocks FE HTTP port
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Spark Master - Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access Spark Master UI at: http://spark.openlakes.local
+{{- if .Values.spark.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: compute-spark-master
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    component: master
+    layer: compute
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`spark.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: compute-spark-master
+          port: 8080  # Spark Master UI port
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Spark Worker - Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access Spark Worker UI at: http://spark-worker.openlakes.local
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: compute-spark-worker
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    component: worker
+    layer: compute
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`spark-worker.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: compute-spark-worker-ui
+          port: 8081  # Spark Worker UI port
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Spark History Server - Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access Spark History at: http://spark-history.openlakes.local
+{{- if .Values.spark.historyServer.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: compute-spark-history
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    component: history-server
+    layer: compute
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`spark-history.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: compute-spark-history-server
+          port: 18080  # Spark History Server UI port
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Trino - Secure Ingress Route (HTTPS)
+# ═══════════════════════════════════════════════════════════════
+# Access Trino UI at: https://trino.openlakes.dev
+{{- if .Values.trino.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: compute-trino-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: trino
+    layer: compute
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`trino.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: compute-trino
+          port: 8080
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: trino.{{ .Values.global.networking.domain }}
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# StarRocks FE - Secure Ingress Route (HTTPS)
+# ═══════════════════════════════════════════════════════════════
+# Access StarRocks UI at: https://starrocks.openlakes.dev
+{{- if .Values.starrocks.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: compute-starrocks-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: starrocks
+    layer: compute
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`starrocks.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: compute-starrocks-fe
+          port: 8030
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: starrocks.{{ .Values.global.networking.domain }}
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Spark Master - Secure Ingress Route (HTTPS)
+# ═══════════════════════════════════════════════════════════════
+# Access Spark Master UI at: https://spark.openlakes.dev
+{{- if .Values.spark.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: compute-spark-master-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    component: master
+    layer: compute
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`spark.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: compute-spark-master
+          port: 8080
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: spark.{{ .Values.global.networking.domain }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Spark Worker - Secure Ingress Route (HTTPS)
+# ═══════════════════════════════════════════════════════════════
+# Access Spark Worker UI at: https://spark-worker.openlakes.dev
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: compute-spark-worker-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    component: worker
+    layer: compute
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`spark-worker.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: compute-spark-worker-ui
+          port: 8081
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: spark-worker.{{ .Values.global.networking.domain }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Spark History Server - Secure Ingress Route (HTTPS)
+# ═══════════════════════════════════════════════════════════════
+# Access Spark History at: https://spark-history.openlakes.dev
+{{- if .Values.spark.historyServer.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: compute-spark-history-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    component: history-server
+    layer: compute
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`spark-history.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: compute-spark-history-server
+          port: 18080
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: spark-history.{{ .Values.global.networking.domain }}
+{{- end }}
+{{- end }}
+{{- end }}
+{{- end }}

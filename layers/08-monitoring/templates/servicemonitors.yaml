@@ -1,0 +1,292 @@
+---
+# ═══════════════════════════════════════════════════════════════
+# OpenLakes Service Monitors
+# ═══════════════════════════════════════════════════════════════
+# Configure Prometheus to scrape metrics from OpenLakes components
+#
+# Components with built-in Prometheus metrics:
+#   - MinIO: Cluster metrics, bucket stats, network I/O
+#   - Spark: Master/worker metrics, application stats
+#   - Trino: Query metrics, resource usage
+#   - Alluxio: Cache hit rates, I/O throughput
+#   - Nessie: API metrics, catalog operations
+#
+# Note: Kafka and PostgreSQL use dedicated exporters
+# (configured in Chart.yaml dependencies)
+
+# ═══════════════════════════════════════════════════════════════
+# MinIO - Object Storage Metrics
+# ═══════════════════════════════════════════════════════════════
+# Exposes cluster health, bucket statistics, network I/O
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: openlakes-minio
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: minio
+    layer: infrastructure
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: minio
+  endpoints:
+  - port: http
+    path: /minio/v2/metrics/cluster
+    interval: 30s
+    scrapeTimeout: 10s
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.global.namespace }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Spark Master - Cluster Metrics
+# ═══════════════════════════════════════════════════════════════
+# Exposes master stats, worker status, running applications
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: openlakes-spark-master
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    component: master
+    layer: compute
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: spark
+      component: master
+  endpoints:
+  - port: webui
+    path: /metrics/prometheus
+    interval: 30s
+    scrapeTimeout: 10s
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.global.namespace }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Spark Worker - Executor Metrics
+# ═══════════════════════════════════════════════════════════════
+# Exposes worker resource usage, executor stats
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: openlakes-spark-worker
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    component: worker
+    layer: compute
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: spark
+      component: worker
+  endpoints:
+  - port: webui
+    path: /metrics/prometheus
+    interval: 30s
+    scrapeTimeout: 10s
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.global.namespace }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Trino - Query Engine Metrics
+# ═══════════════════════════════════════════════════════════════
+# Exposes query statistics, resource utilization, coordinator stats (via JMX exporter)
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: openlakes-trino
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: trino
+    layer: compute
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: trino
+  endpoints:
+  - port: metrics
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.global.namespace }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Nessie - Iceberg Catalog Metrics
+# ═══════════════════════════════════════════════════════════════
+# Exposes API metrics, catalog operations, version store stats
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: openlakes-nessie
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: nessie
+    layer: infrastructure
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: nessie
+  endpoints:
+  - port: http
+    path: /q/metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.global.namespace }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Alluxio Master - Cache Metrics
+# ═══════════════════════════════════════════════════════════════
+# Exposes cache hit rates, I/O throughput, tier statistics
+{{- if .Values.alluxioMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: openlakes-alluxio-master
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: alluxio
+    component: master
+    layer: infrastructure
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: alluxio
+      component: master
+  endpoints:
+  - port: metrics
+    path: /metrics/prometheus
+    interval: 30s
+    scrapeTimeout: 10s
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.global.namespace }}
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Alluxio Worker - Cache Worker Metrics
+# ═══════════════════════════════════════════════════════════════
+# Exposes per-worker cache stats, block I/O, tier usage
+{{- if .Values.alluxioMonitor.enabled }}
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: openlakes-alluxio-worker
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: alluxio
+    component: worker
+    layer: infrastructure
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app: alluxio
+      component: worker
+  endpoints:
+  - port: metrics
+    path: /metrics/prometheus
+    interval: 30s
+    scrapeTimeout: 10s
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.global.namespace }}
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Airflow Metrics (via StatsD Exporter)
+# ═══════════════════════════════════════════════════════════════
+# Airflow sends metrics to StatsD exporter via UDP port 9125
+# StatsD exporter converts metrics to Prometheus format
+#
+# Configured in:
+#   - Layer 04 (Orchestration): Airflow statsd.enabled=true
+#   - Layer 08 (Monitoring): StatsD exporter with serviceMonitor
+#
+# Metrics include:
+#   - DAG run success/failure rates and duration
+#   - Task instance states and execution times
+#   - Scheduler heartbeat and task queues
+#   - Executor open/queued/running tasks
+#   - Pool utilization
+#
+# Access metrics at: http://monitoring-statsd-exporter:9102/metrics
+# ServiceMonitor: Automatically created by statsd-exporter chart
+#
+# ═══════════════════════════════════════════════════════════════
+
+---
+# ═══════════════════════════════════════════════════════════════
+# NOTE: Superset, OpenMetadata ServiceMonitors Not Configured
+# ═══════════════════════════════════════════════════════════════
+# These services require additional configuration to expose Prometheus metrics:
+#
+# - Superset: Does not expose Prometheus metrics by default
+#   Requires custom metrics exporter or StatsD integration
+#
+# - OpenMetadata: Metrics endpoint availability uncertain
+#   May require additional configuration or plugin
+#
+# To add metrics for these services in the future:
+# 1. Configure the application to expose metrics
+# 2. Add corresponding ServiceMonitor in this file
+# 3. Update Grafana dashboards accordingly
+#
+# ═══════════════════════════════════════════════════════════════
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Traefik - Ingress Controller Metrics
+# ═══════════════════════════════════════════════════════════════
+# Exposes request rates, response times, backend health
+apiVersion: monitoring.coreos.com/v1
+kind: ServiceMonitor
+metadata:
+  name: openlakes-traefik
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: traefik
+    layer: infrastructure
+    release: monitoring
+spec:
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: traefik
+  endpoints:
+  - port: traefik
+    path: /metrics
+    interval: 30s
+    scrapeTimeout: 10s
+    scheme: http
+  namespaceSelector:
+    matchNames:
+    - {{ .Values.global.namespace }}

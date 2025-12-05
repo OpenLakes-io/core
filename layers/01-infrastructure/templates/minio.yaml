@@ -1,0 +1,162 @@
+{{- if .Values.minio.enabled }}
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.minio.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: minio
+    component: storage
+    {{- with .Values.global.tenant }}
+    openlakes.io/tenant: {{ . }}
+    {{- end }}
+spec:
+  podManagementPolicy: Parallel
+  serviceName: {{ .Values.minio.fullnameOverride }}-headless
+  replicas: {{ .Values.minio.replicas | default 4 }}
+  selector:
+    matchLabels:
+      app: minio
+  template:
+    metadata:
+      labels:
+        app: minio
+        component: storage
+        {{- with .Values.global.tenant }}
+        openlakes.io/tenant: {{ . }}
+        {{- end }}
+    spec:
+      # Spread pods across different nodes for fault tolerance
+      affinity:
+        podAntiAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            podAffinityTerm:
+              labelSelector:
+                matchExpressions:
+                - key: app
+                  operator: In
+                  values:
+                  - minio
+              topologyKey: kubernetes.io/hostname
+        # Prefer amd64 nodes (exclude RPi)
+        nodeAffinity:
+          preferredDuringSchedulingIgnoredDuringExecution:
+          - weight: 100
+            preference:
+              matchExpressions:
+              - key: kubernetes.io/arch
+                operator: In
+                values:
+                - amd64
+      containers:
+      - name: minio
+        image: {{ .Values.minio.image.repository }}:{{ .Values.minio.image.tag }}
+        command:
+        - /bin/sh
+        - -c
+        - |
+          {{- if eq (.Values.minio.replicas | int) 1 }}
+          # Standalone mode (single server)
+          minio server /data --console-address :9001
+          {{- else }}
+          # Distributed mode with explicit endpoints for each pod
+          # Format: http://minio-{n}.namespace.svc.cluster.local/data
+          minio server \
+          {{- $replicas := (.Values.minio.replicas | default 4) | int -}}
+          {{- $fullname := .Values.minio.fullnameOverride -}}
+          {{- $namespace := .Values.global.namespace -}}
+          {{- range $i, $e := until $replicas }}
+            http://{{ $fullname }}-{{ $i }}.{{ $fullname }}-headless.{{ $namespace }}.svc.cluster.local/data \
+          {{- end }}
+          --console-address :9001
+          {{- end }}
+        env:
+        - name: MINIO_ROOT_USER
+          value: {{ .Values.minio.auth.rootUser }}
+        - name: MINIO_ROOT_PASSWORD
+          value: {{ .Values.minio.auth.rootPassword }}
+        ports:
+        - containerPort: 9000
+          name: api
+        - containerPort: 9001
+          name: console
+        volumeMounts:
+        - name: data
+          mountPath: /data
+        resources:
+          {{- toYaml .Values.minio.resources | nindent 10 }}
+        livenessProbe:
+          httpGet:
+            path: /minio/health/live
+            port: 9000
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        readinessProbe:
+          httpGet:
+            path: /minio/health/ready
+            port: 9000
+          initialDelaySeconds: 5
+          periodSeconds: 5
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      # StorageClass can be overridden via values; default to empty to bind static PVs
+      {{- if .Values.minio.persistence.storageClass }}
+      storageClassName: {{ .Values.minio.persistence.storageClass | quote }}
+      {{- else }}
+      storageClassName: ""
+      {{- end }}
+      resources:
+        requests:
+          storage: {{ .Values.minio.persistence.size }}
+
+---
+# Headless service for StatefulSet pod DNS (required for distributed mode)
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.minio.fullnameOverride }}-headless
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: minio
+spec:
+  clusterIP: None  # Headless
+  publishNotReadyAddresses: true  # Allow DNS before pods are ready
+  selector:
+    app: minio
+  ports:
+  - name: api
+    port: 9000
+    targetPort: 9000
+  - name: console
+    port: 9001
+    targetPort: 9001
+
+---
+# Regular service for external access
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.minio.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: minio
+spec:
+  type: {{ .Values.minio.service.type | default "ClusterIP" }}
+  selector:
+    app: minio
+  ports:
+  - name: api
+    port: 9000
+    targetPort: 9000
+    {{- if eq (.Values.minio.service.type | default "ClusterIP") "NodePort" }}
+    nodePort: {{ .Values.minio.service.nodePort }}
+    {{- end }}
+  - name: console
+    port: 9001
+    targetPort: 9001
+{{- end }}

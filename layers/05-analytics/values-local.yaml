@@ -1,0 +1,14 @@
+# Local development overrides for Layer 05 - Analytics
+#
+# Usage: helm upgrade --install 05-analytics ./layers/05-analytics \
+#          --namespace openlakes \
+#          --values layers/05-analytics/values.yaml \
+#          --values layers/05-analytics/values-local.yaml
+
+jupyterhub:
+  singleuser:
+    # Override to use locally built image
+    image:
+      name: jupyterhub-notebook
+      tag: "local"
+      pullPolicy: Never  # Don't pull from remote registry

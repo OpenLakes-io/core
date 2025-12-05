@@ -1,0 +1,52 @@
+{{- if and .Values.notebooks.bucket .Values.jupyterhub.enabled }}
+---
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: analytics-notebooks-sync
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: analytics-notebook-sync
+spec:
+  schedule: {{ .Values.notebooks.sync.downloadSchedule | default "*/2 * * * *" | quote }}
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 1
+  failedJobsHistoryLimit: 1
+  jobTemplate:
+    spec:
+      template:
+        metadata:
+          labels:
+            app: analytics-notebook-sync
+        spec:
+          restartPolicy: OnFailure
+          containers:
+          - name: sync
+            image: minio/mc:latest
+            env:
+            - name: MINIO_ENDPOINT
+              value: {{ .Values.global.minio.endpoint | quote }}
+            - name: MINIO_ROOT_USER
+              value: {{ .Values.global.minio.rootUser | quote }}
+            - name: MINIO_ROOT_PASSWORD
+              value: {{ .Values.global.minio.rootPassword | quote }}
+            - name: NOTEBOOK_BUCKET
+              value: {{ .Values.notebooks.bucket | quote }}
+            - name: NOTEBOOK_SHARED_PREFIX
+              value: {{ .Values.notebooks.prefixes.shared | default "shared" | quote }}
+            command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              alias mc='/usr/bin/mc --quiet'
+              mc alias set minio "${MINIO_ENDPOINT}" "${MINIO_ROOT_USER}" "${MINIO_ROOT_PASSWORD}"
+              mc mirror --overwrite "minio/${NOTEBOOK_BUCKET}/${NOTEBOOK_SHARED_PREFIX}" /examples
+            volumeMounts:
+            - name: shared-examples
+              mountPath: /examples
+          volumes:
+          - name: shared-examples
+            persistentVolumeClaim:
+              claimName: analytics-jupyter-examples
+{{- end }}

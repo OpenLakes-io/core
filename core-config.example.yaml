@@ -1,0 +1,169 @@
+# OpenLakes Core centralized configuration
+# This file drives deploy-openlakes.sh and all Helm layers.
+
+cluster:
+  mode: auto                # auto|single|multi (auto detects node count)
+  namespace: openlakes
+  storageClass: longhorn    # default storage class for multi-node
+  singleNodeStorageClass: local-path
+
+networking:
+  domain: openlakes.dev
+  ingressClass: traefik
+  enableIngressRoutes: true
+  useNodePortFallback: false
+
+credentials:
+  minio:
+    secretName: ""
+    rootUser: admin
+    rootPassword: admin123
+  postgres:
+    secretName: ""
+    user: openlakes
+    password: openlakes123
+    postgresPassword: postgres123
+  superset:
+    user: admin
+    password: admin123
+  airflow:
+    user: admin
+    password: admin123
+  grafana:
+    password: admin123
+  openmetadata:
+    user: admin@open-metadata.org
+    password: admin
+
+storage:
+  minio:
+    precreateBuckets: true
+    buckets:
+      main: openlakes
+      sparkHistoryPrefix: spark-history/
+  tiers:
+    hot:
+      - node: ryzen
+        paths:
+          - /minio1
+          - /minio2
+      - node: nuc
+        paths:
+          - /minio1
+          - /minio2
+      - node: nuc2
+        paths:
+          - /minio1
+          - /minio2
+    cold:
+      - node: ryzen
+        paths:
+          - /cold-nas
+      - node: nuc
+        paths:
+          - /cold-nas
+      - node: rbp2
+        paths:
+          - /cold-nas
+      - node: nuc2
+        paths:
+          - /cold-nas
+    cache:
+      - node: ryzen
+        paths:
+          - /alluxio
+      - node: nuc
+        paths:
+          - /alluxio
+      - node: nuc2
+        paths:
+          - /alluxio
+    longhorn:
+      - node: ryzen
+        paths:
+          - /longhorn
+      - node: nuc
+        paths:
+          - /longhorn
+      - node: nuc2
+        paths:
+          - /longhorn
+  longhorn:
+    enabled: true
+    reclaimPolicy: Retain
+
+notebooks:
+  bucket: openlakes-notebooks
+  prefixes:
+    shared: shared
+    workspace: workspace
+    published: published
+    artifacts: artifacts
+  sync:
+    downloadSchedule: "*/2 * * * *"
+    uploadSchedule: "*/5 * * * *"
+    airflowSchedule: "*/3 * * * *"
+  versioning: true
+
+components:
+  schemaRegistry: true
+  alluxio: false
+  gpuMonitoring: auto   # auto|true|false
+  populateExamples: true  # when true, local examples from the repo will be synced to JupyterHub
+
+timeouts:
+  helm: 5m
+  probes:
+    profile: slow        # slow|medium|fast (applied to sensitive services)
+
+# Optional resource profile override (compact-vm|compact|small|full)
+resourceProfile: ""
+
+observability:
+  loki:
+    limits:
+      maxStreamsPerUser: 20000
+      maxQuerySeries: 10000
+      maxQueryParallelism: 16
+      retentionPeriod: 168h
+    storageClass: ""
+  promtail:
+    inotify:
+      maxUserInstances: 8192
+      maxUserWatches: 524288
+  grafana:
+    storageClass: ""
+  prometheus:
+    storageClass: ""
+
+spark:
+  s3:
+    endpoint: http://infrastructure-minio:9000
+    accessKey: admin
+    secretKey: admin123
+
+meltano:
+  s3:
+    bucket: ""            # defaults to storage.minio.buckets.main when empty
+    prefix: meltano/
+
+airflow:
+  extraPipPackages:
+    - "apache-airflow-providers-papermill==3.8.1"
+    - "apache-airflow-providers-apache-spark==5.4.0"
+    - "apache-airflow-providers-common-compat==1.10.0"
+    - "pyspark==3.5.4"
+    - "grpcio-status==1.76.0"
+    - "papermill==2.6.0"
+    - "trino==0.328.0"
+    - "kafka-python==2.0.2"
+
+ingress:
+  enabled: true
+  tls: false
+
+dashboard:
+  protocol: https
+  port: "443"
+  showCredentials: true
+  version: ""

@@ -1,0 +1,151 @@
+{{- if .Values.global.networking.enableIngressRoutes }}
+---
+# ═══════════════════════════════════════════════════════════════
+# Grafana - Monitoring Dashboards - Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access Grafana at: http://grafana.openlakes.local
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: monitoring-grafana
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: grafana
+    layer: monitoring
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`grafana.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: monitoring-grafana
+          port: 3000  # Grafana UI port
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Prometheus - Metrics Database - Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access Prometheus UI at: http://prometheus.openlakes.local
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: monitoring-prometheus
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: prometheus
+    layer: monitoring
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`prometheus.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: monitoring-prometheus
+          port: 9090  # Prometheus UI port
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Alertmanager - Alert Management - Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access Alertmanager UI at: http://alertmanager.openlakes.local
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: monitoring-alertmanager
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: alertmanager
+    layer: monitoring
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`alertmanager.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: monitoring-alertmanager
+          port: 9093  # Alertmanager UI port
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Grafana - Secure Ingress Route (HTTPS)
+# ═══════════════════════════════════════════════════════════════
+# Access Grafana at: https://grafana.openlakes.dev
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: monitoring-grafana-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: grafana
+    layer: monitoring
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`grafana.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: monitoring-grafana
+          port: 3000
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: grafana.{{ .Values.global.networking.domain }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Prometheus - Secure Ingress Route (HTTPS)
+# ═══════════════════════════════════════════════════════════════
+# Access Prometheus UI at: https://prometheus.openlakes.dev
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: monitoring-prometheus-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: prometheus
+    layer: monitoring
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`prometheus.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: monitoring-prometheus
+          port: 9090
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: prometheus.{{ .Values.global.networking.domain }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Alertmanager - Secure Ingress Route (HTTPS)
+# ═══════════════════════════════════════════════════════════════
+# Access Alertmanager UI at: https://alertmanager.openlakes.dev
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: monitoring-alertmanager-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: alertmanager
+    layer: monitoring
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`alertmanager.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: monitoring-alertmanager
+          port: 9093
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: alertmanager.{{ .Values.global.networking.domain }}
+{{- end }}

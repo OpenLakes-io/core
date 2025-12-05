@@ -1,0 +1,295 @@
+global:
+  networking:
+    type: ClusterIP  # Service type (ClusterIP + Ingress for external access via Traefik)
+    ingressClass: traefik
+    domain: openlakes.dev
+    enableIngressRoutes: true  # Create Traefik IngressRoutes for hostname routing
+  storageClass: longhorn
+  namespace: openlakes
+  # Optional tenant identifier for multi-tenant deployments
+  tenant: ""
+  # Service references (should match layer 01-infrastructure or be overridden)
+  services:
+    postgresql:
+      host: infrastructure-postgres
+      port: 5432
+    minio:
+      host: infrastructure-minio
+      port: 9000
+      endpoint: http://infrastructure-minio:9000
+    kafka:
+      host: infrastructure-kafka
+      port: 9092
+      bootstrapServers: infrastructure-kafka:9092
+    nessie:
+      host: infrastructure-nessie
+      port: 19120
+
+trino:
+  enabled: true
+  fullnameOverride: compute-trino
+  image:
+    repository: trinodb/trino
+    tag: "478"
+  coordinator:
+    serviceType: ClusterIP  # Changed from NodePort - access via trino.openlakes.dev
+  # Iceberg/Nessie catalog configuration
+  # Uses global.services by default, override for custom endpoints
+  catalog:
+    nessie:
+      uri: ""  # Empty = use global.services.nessie (set in template)
+    s3:
+      endpoint: ""  # Empty = use global.services.minio.endpoint (set in template)
+      accessKey: admin
+      secretKey: admin123
+  # Ingress routing: trino.openlakes.dev → Trino UI
+#    limits:
+
+starrocks:
+  enabled: false
+  fullnameOverride: compute-starrocks
+  fe:
+    image:
+      repository: starrocks/fe-ubuntu
+      tag: "3.5-latest"
+    replicas: 1
+    serviceType: ClusterIP  # Changed from NodePort - access via starrocks.openlakes.dev
+  # Ingress routing: starrocks.openlakes.dev → StarRocks FE UI
+#      limits:
+    persistence:
+      size: 10Gi
+  be:
+    image:
+      repository: starrocks/be-ubuntu
+      tag: "3.5-latest"
+    replicas: 1
+#      limits:
+    persistence:
+      size: 50Gi
+
+# Apache Spark Configuration
+spark:
+  enabled: true
+  fullnameOverride: compute-spark
+
+  # Image configuration
+  # OpenLakes Core uses custom Spark image with Iceberg, Nessie, S3A, and OpenMetadata support
+  image:
+    repository: ghcr.io/openlakes/core/spark
+    tag: "1.0.0"
+    pullPolicy: IfNotPresent
+
+  # Master configuration
+  master:
+    serviceType: ClusterIP  # Changed from NodePort - access via spark.openlakes.dev
+    daemonMemory: "512m"
+  # Ingress routing: spark.openlakes.dev → Spark Master UI
+#      limits:
+#        memory: 2Gi
+
+  # Worker configuration
+  worker:
+    replicas: 1
+    cores: 1
+    memory: "2g"
+    daemonMemory: "512m"
+    exposeUI: true
+    serviceType: ClusterIP  # Changed from NodePort - access via spark-worker.openlakes.dev
+  # Ingress routing: spark-worker.openlakes.dev → Spark Worker UI
+#      limits:
+#        memory: 3Gi
+
+  # Executor configuration for Spark jobs
+  executor:
+    instances: 2
+    memory: "2g"
+    cores: 1
+
+  # Driver configuration for Spark jobs
+  driver:
+    memory: "2g"
+    cores: 1
+
+  # History Server configuration
+  historyServer:
+    enabled: true
+    eventLogDir: "s3a://openlakes/spark-history/"
+    serviceType: ClusterIP  # Changed from NodePort - access via spark-history.openlakes.dev
+    memory: "1Gi"
+    probeProfile: slow
+  # Ingress routing: spark-history.openlakes.dev → Spark History Server
+
+  # Hive Metastore integration (optional)
+  hive:
+    enabled: false
+    metastoreUris: "thrift://hive-metastore:9083"
+
+  # S3/MinIO configuration for data lake access
+  # Uses global.services.minio.endpoint by default (set in template)
+  s3:
+    enabled: true
+    endpoint: ""  # Empty = use global.services.minio.endpoint
+    accessKey: "admin"
+    secretKey: "admin123"
+
+  # Fallback minio creds for spark history (used if s3 keys unset)
+  minio:
+    rootUser: "admin"
+    rootPassword: "admin123"
+
+  # ════════════════════════════════════════════════════════════════
+  # Alluxio Distributed Caching (Multi-Node Clusters Only)
+  # ════════════════════════════════════════════════════════════════
+  # Provides transparent caching layer between Spark and MinIO
+  # Hot data: Served from Alluxio cache (sub-millisecond latency)
+  # Cold data: Fetched from MinIO → cached in Alluxio for future access
+  #
+  # Access patterns:
+  #   alluxio://openlakes/warehouse/my-table  → Explicit Alluxio path
+  #   s3a://openlakes/warehouse/my-table      → Direct MinIO (no cache)
+  #
+  # Enable via: ./configure-storage.sh (multi-node deployment)
+  alluxio:
+    # Enable Alluxio integration (set by storage wizard based on cluster type)
+    # Single-node: false (no benefit)
+    # Multi-node: true (distributed caching)
+    enabled: false
+
+    # Alluxio master connection
+    master:
+      host: "infrastructure-alluxio-master"
+      rpcPort: 19998
+      webPort: 19999
+
+    # Alluxio client configuration properties
+    # These are injected into Spark configuration as spark.hadoop.alluxio.*
+    client:
+      # Short-circuit reads for co-located Spark executors and Alluxio workers
+      # When Spark executor runs on same node as Alluxio worker, read directly from local cache
+      shortCircuit:
+        enabled: true
+        policy: "local"
+
+      # Cache behavior
+      # CACHE: Always cache data on read (passive caching)
+      # NO_CACHE: Never cache, always read from understore
+      # CACHE_PROMOTE: Cache and promote to higher tier on access
+      readType: "CACHE"
+
+      # Write behavior
+      # CACHE_THROUGH: Write to cache AND understore (MinIO)
+      # MUST_CACHE: Write to cache only (requires manual flush)
+      # THROUGH: Write to understore only (no cache)
+      writeType: "CACHE_THROUGH"
+
+      # Block read metrics for monitoring
+      metrics:
+        enabled: true
+
+      # Data policy - for Iceberg tables
+      # Tells Alluxio to cache Iceberg data files and metadata
+      iceberg:
+        cacheDataFiles: true
+        cacheMetadataFiles: true
+
+    # Spark configuration properties for Alluxio
+    # These are automatically added to spark-defaults.conf
+    sparkDefaults:
+      # Alluxio filesystem implementation
+      spark.hadoop.fs.alluxio.impl: "alluxio.hadoop.FileSystem"
+
+      # Alluxio master configuration
+      spark.hadoop.alluxio.master.hostname: "infrastructure-alluxio-master"
+      spark.hadoop.alluxio.master.rpc.port: "19998"
+
+      # Client configuration
+      spark.hadoop.alluxio.user.short.circuit.enabled: "true"
+      spark.hadoop.alluxio.user.file.readtype.default: "CACHE"
+      spark.hadoop.alluxio.user.file.writetype.default: "CACHE_THROUGH"
+      spark.hadoop.alluxio.user.block.read.metrics.enabled: "true"
+      spark.hadoop.alluxio.user.file.passive.cache.enabled: "true"
+
+      # Performance tuning
+      spark.hadoop.alluxio.user.block.size.bytes.default: "128MB"
+      spark.hadoop.alluxio.user.streaming.reader.chunk.size.bytes: "4MB"
+      spark.hadoop.alluxio.user.streaming.writer.chunk.size.bytes: "4MB"
+
+      # Metadata caching for Iceberg
+      spark.hadoop.alluxio.user.file.metadata.sync.interval: "30s"
+
+  # Spark logging level (ERROR, WARN, INFO, DEBUG)
+  logLevel: INFO
+
+  # Additional Spark defaults configuration
+  sparkDefaults: {}
+    # spark.sql.shuffle.partitions: "200"
+    # spark.default.parallelism: "100"
+
+  # Additional environment variables
+  environment: {}
+
+  # ════════════════════════════════════════════════════════════════
+  # OpenMetadata Lineage Integration (OpenLakes v1.0.0)
+  # ════════════════════════════════════════════════════════════════
+  # Automated data lineage capture using openlakesbot authentication
+  openmetadata:
+    # Enable/disable OpenMetadata lineage integration
+    # DISABLED IN CORE: OpenMetadata lineage requires enhanced Spark image
+    # For automated lineage, use OpenLakes Pier which provides enhanced image
+    enabled: false
+
+    # OpenMetadata Spark Agent version
+    # This should match the JAR version bundled in the custom Spark image
+    agentVersion: "1.0-beta"
+
+    # OpenMetadata server connection details
+    server:
+      host: catalog-openmetadata-server
+      port: 8585
+      protocol: http
+      # Full endpoint: http://catalog-openmetadata-server:8585
+
+    # Authentication
+    # Uses openlakesbot JWT token (synced from catalog namespace)
+    # Token has unlimited expiry and admin permissions
+    authentication:
+      type: jwt
+      # Bot name registered in OpenMetadata
+      botName: openlakesbot
+      # Secret containing the JWT token (created by token-sync job)
+      secretName: compute-spark-openmetadata
+      secretKey: jwt-token
+
+    # Pipeline service configuration
+    # This name MUST match the pipeline service registered in OpenMetadata
+    # by the bot-and-connector-setup-job in Layer 07
+    pipelineServiceName: compute-spark
+
+    # Default pipeline name for lineage jobs
+    # Can be overridden per job via spark-submit arguments
+    defaultPipelineName: openlakes-spark-jobs
+
+    # Pipeline source URL (for reference in OpenMetadata UI)
+    pipelineSourceUrl: http://compute-spark-master:8080
+
+    # Pipeline description
+    pipelineDescription: "OpenLakes Spark data processing jobs with automated lineage capture"
+
+    # Database services to track for lineage
+    # These service names must exist in OpenMetadata before lineage will work
+    # Services are registered by the bot-and-connector-setup-job (Layer 07)
+    databaseServices:
+      - infrastructure-postgres
+      - compute-trino
+      - infrastructure-minio
+
+    # API communication timeout (seconds)
+    timeout: 30
+
+    # Advanced configuration
+    advanced:
+      # Disable lineage for specific namespaces/facets (optional)
+      # disabledFacets: []
+
+      # Custom transport properties (optional)
+      # transportProperties: {}

@@ -1,0 +1,54 @@
+{{- if .Values.global.networking.enableIngressRoutes }}
+---
+# ═══════════════════════════════════════════════════════════════
+# Debezium - Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access Debezium REST API at: http://debezium.openlakes.local
+{{- if .Values.debezium.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: ingestion-debezium
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: debezium
+    layer: ingestion
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`debezium.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: ingestion-debezium
+          port: 8083  # Debezium Connect REST API port
+{{- end }}
+
+# ═══════════════════════════════════════════════════════════════
+# Debezium - Secure Ingress Route (HTTPS)
+# ═══════════════════════════════════════════════════════════════
+# Access Debezium REST API at: https://debezium.openlakes.dev
+{{- if .Values.debezium.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: ingestion-debezium-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: debezium
+    layer: ingestion
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`debezium.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: ingestion-debezium
+          port: 8083
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: debezium.{{ .Values.global.networking.domain }}
+{{- end }}
+{{- end }}

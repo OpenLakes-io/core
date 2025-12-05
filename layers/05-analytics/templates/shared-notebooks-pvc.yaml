@@ -1,0 +1,19 @@
+{{- $sharedEnabled := ternary .Values.analyticsSharedExamplesEnabled true (hasKey .Values "analyticsSharedExamplesEnabled") }}
+{{- if and .Values.jupyterhub.enabled $sharedEnabled }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.jupyterhub.fullnameOverride }}-examples
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: jupyterhub
+    component: shared-examples
+spec:
+  accessModes:
+    - ReadWriteOnce
+  storageClassName: {{ .Values.global.storageClass }}
+  resources:
+    requests:
+      storage: 1Gi
+{{- end }}

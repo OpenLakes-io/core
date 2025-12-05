@@ -1,0 +1,28 @@
+# ════════════════════════════════════════════════════════════════
+# OpenLakes Layer 02 - Compute
+# DEV Environment Overrides
+# ════════════════════════════════════════════════════════════════
+#
+# Purpose: Collaborative development - share work-in-progress
+#
+# Usage:
+#   ./deploy-openlakes.sh --env dev
+#   # OR
+#   helm upgrade --install 02-compute ./layers/02-compute \
+#     --namespace openlakes \
+#     -f ./layers/02-compute/values.yaml \
+#     -f ./layers/02-compute/values-dev.yaml
+#
+# Workflow:
+#   OpenLakes Core uses vanilla Apache Spark
+#   For S3A support, use --packages at runtime (see examples/)
+#   For automated lineage, use OpenLakes Pier instead of Core
+#
+# ════════════════════════════════════════════════════════════════
+
+spark:
+  image:
+    # Core uses official Apache Spark (no custom image)
+    repository: apache/spark
+    tag: "4.1.0-preview3"
+    pullPolicy: IfNotPresent

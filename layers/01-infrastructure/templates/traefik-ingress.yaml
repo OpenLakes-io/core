@@ -1,0 +1,268 @@
+{{- if and (or .Values.traefik.enabled .Values.traefik.useExisting) .Values.global.networking.enableIngressRoutes }}
+---
+# ═══════════════════════════════════════════════════════════════
+# MinIO Console - Ingress Routes (HTTP + HTTPS)
+# ═══════════════════════════════════════════════════════════════
+# HTTP route - redirects to HTTPS if Let's Encrypt enabled
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: infrastructure-minio
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: minio
+    layer: infrastructure
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`minio.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: infrastructure-minio
+          port: 9001
+{{- if .Values.traefik.certResolver.cloudflare.enabled }}
+      middlewares:
+        - name: redirect-https
+          namespace: {{ .Values.global.namespace }}
+{{- end }}
+
+{{- if .Values.traefik.certResolver.cloudflare.enabled }}
+---
+# HTTPS route with Let's Encrypt certificate
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: infrastructure-minio-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: minio
+    layer: infrastructure
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`minio.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: infrastructure-minio
+          port: 9001
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: minio.{{ .Values.global.networking.domain }}
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Nessie REST API - Ingress Routes (HTTP + HTTPS)
+# ═══════════════════════════════════════════════════════════════
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: infrastructure-nessie
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: nessie
+    layer: infrastructure
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`nessie.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: infrastructure-nessie
+          port: 19120
+{{- if .Values.traefik.certResolver.cloudflare.enabled }}
+      middlewares:
+        - name: redirect-https
+          namespace: {{ .Values.global.namespace }}
+{{- end }}
+
+{{- if .Values.traefik.certResolver.cloudflare.enabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: infrastructure-nessie-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: nessie
+    layer: infrastructure
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`nessie.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: infrastructure-nessie
+          port: 19120
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: nessie.{{ .Values.global.networking.domain }}
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Kafka Schema Registry - Ingress Routes (HTTP + HTTPS)
+# ═══════════════════════════════════════════════════════════════
+{{- if .Values.schemaRegistry.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: infrastructure-schema-registry
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: schema-registry
+    layer: infrastructure
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`schema-registry.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: infrastructure-schema-registry
+          port: {{ .Values.schemaRegistry.service.port }}
+{{- if .Values.traefik.certResolver.cloudflare.enabled }}
+      middlewares:
+        - name: redirect-https
+          namespace: {{ .Values.global.namespace }}
+{{- end }}
+
+{{- if .Values.traefik.certResolver.cloudflare.enabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: infrastructure-schema-registry-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: schema-registry
+    layer: infrastructure
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`schema-registry.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: infrastructure-schema-registry
+          port: {{ .Values.schemaRegistry.service.port }}
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: schema-registry.{{ .Values.global.networking.domain }}
+{{- end }}
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Traefik Dashboard - Ingress Routes (HTTP + HTTPS)
+# ═══════════════════════════════════════════════════════════════
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: traefik-dashboard
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: traefik
+    layer: infrastructure
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`traefik.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: api@internal
+          kind: TraefikService
+{{- if .Values.traefik.certResolver.cloudflare.enabled }}
+      middlewares:
+        - name: redirect-https
+          namespace: {{ .Values.global.namespace }}
+{{- end }}
+
+{{- if .Values.traefik.certResolver.cloudflare.enabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: traefik-dashboard-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: traefik
+    layer: infrastructure
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`traefik.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: api@internal
+          kind: TraefikService
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: traefik.{{ .Values.global.networking.domain }}
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Alluxio Web UI - Ingress Routes (HTTP + HTTPS)
+# ═══════════════════════════════════════════════════════════════
+{{- if .Values.alluxio.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: infrastructure-alluxio
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: alluxio
+    layer: infrastructure
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`alluxio.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: infrastructure-alluxio-master
+          port: 19999
+{{- if .Values.traefik.certResolver.cloudflare.enabled }}
+      middlewares:
+        - name: redirect-https
+          namespace: {{ .Values.global.namespace }}
+{{- end }}
+
+{{- if .Values.traefik.certResolver.cloudflare.enabled }}
+---
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: infrastructure-alluxio-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: alluxio
+    layer: infrastructure
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`alluxio.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: infrastructure-alluxio-master
+          port: 19999
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: alluxio.{{ .Values.global.networking.domain }}
+{{- end }}
+{{- end }}
+
+{{- end }}

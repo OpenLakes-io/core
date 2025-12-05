@@ -1,0 +1,174 @@
+{
+  "dashboard": {
+    "title": "OpenLakes - Storage Performance",
+    "tags": ["openlakes", "storage", "minio", "alluxio"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "30s",
+    "panels": [
+      {
+        "id": 1,
+        "gridPos": {"x": 0, "y": 0, "w": 12, "h": 1},
+        "type": "row",
+        "title": "MinIO - Object Storage"
+      },
+      {
+        "id": 2,
+        "gridPos": {"x": 0, "y": 1, "w": 6, "h": 4},
+        "type": "stat",
+        "title": "MinIO Uptime",
+        "targets": [{
+          "expr": "minio_node_process_uptime_seconds",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "s",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "gridPos": {"x": 6, "y": 1, "w": 6, "h": 4},
+        "type": "stat",
+        "title": "Total Storage Capacity",
+        "targets": [{
+          "expr": "minio_cluster_capacity_usable_total_bytes",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "gridPos": {"x": 12, "y": 1, "w": 6, "h": 4},
+        "type": "stat",
+        "title": "Storage Used",
+        "targets": [{
+          "expr": "minio_bucket_usage_total_bytes",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "gridPos": {"x": 18, "y": 1, "w": 6, "h": 4},
+        "type": "stat",
+        "title": "Total Objects",
+        "targets": [{
+          "expr": "minio_bucket_usage_object_total",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 6,
+        "gridPos": {"x": 0, "y": 5, "w": 12, "h": 8},
+        "type": "graph",
+        "title": "MinIO Request Rate",
+        "targets": [{
+          "expr": "rate(minio_s3_requests_total[5m])",
+          "legendFormat": "{{api}}",
+          "refId": "A"
+        }],
+        "yaxes": [
+          {"format": "reqps", "label": "Requests/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 7,
+        "gridPos": {"x": 12, "y": 5, "w": 12, "h": 8},
+        "type": "graph",
+        "title": "MinIO Throughput",
+        "targets": [
+          {
+            "expr": "rate(minio_s3_traffic_received_bytes[5m])",
+            "legendFormat": "Received",
+            "refId": "A"
+          },
+          {
+            "expr": "rate(minio_s3_traffic_sent_bytes[5m])",
+            "legendFormat": "Sent",
+            "refId": "B"
+          }
+        ],
+        "yaxes": [
+          {"format": "Bps", "label": "Bytes/sec"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 8,
+        "gridPos": {"x": 0, "y": 13, "w": 12, "h": 1},
+        "type": "row",
+        "title": "PostgreSQL - Relational Database"
+      },
+      {
+        "id": 9,
+        "gridPos": {"x": 0, "y": 14, "w": 12, "h": 8},
+        "type": "graph",
+        "title": "PostgreSQL Connections",
+        "targets": [{
+          "expr": "pg_stat_database_numbackends{datname!=\"template0\",datname!=\"template1\"}",
+          "legendFormat": "{{datname}}",
+          "refId": "A"
+        }],
+        "yaxes": [
+          {"format": "short", "label": "Connections"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 10,
+        "gridPos": {"x": 12, "y": 14, "w": 12, "h": 8},
+        "type": "graph",
+        "title": "PostgreSQL Transaction Rate",
+        "targets": [{
+          "expr": "rate(pg_stat_database_xact_commit{datname!=\"template0\",datname!=\"template1\"}[5m])",
+          "legendFormat": "{{datname}}",
+          "refId": "A"
+        }],
+        "yaxes": [
+          {"format": "ops", "label": "Transactions/sec"},
+          {"format": "short"}
+        ]
+      }
+    ]
+  }
+}

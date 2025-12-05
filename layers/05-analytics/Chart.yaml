@@ -1,0 +1,11 @@
+apiVersion: v2
+name: openlakes-analytics
+version: 1.0.0
+description: OpenLakes analytics layer - BI, notebooks, and metadata management
+type: application
+
+dependencies:
+  - name: jupyterhub
+    version: 4.3.1
+    repository: https://hub.jupyter.org/helm-chart/
+    condition: jupyterhub.enabled

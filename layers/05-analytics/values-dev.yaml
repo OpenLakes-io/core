@@ -1,0 +1,40 @@
+# Dev environment overrides for Layer 05 - Analytics
+#
+# Usage: helm upgrade --install 05-analytics ./layers/05-analytics \
+#          --namespace openlakes \
+#          --values layers/05-analytics/values.yaml \
+#          --values layers/05-analytics/values-dev.yaml
+
+jupyterhub:
+  # Disable image pre-pullers in dev (they cause issues with architecture mismatch)
+  prePuller:
+    hook:
+      enabled: false
+    continuous:
+      enabled: false
+
+  hub:
+    extraEnv:
+      KUBERNETES_SERVICE_HOST: "10.43.0.1"
+      KUBERNETES_SERVICE_PORT: "443"
+      KUBERNETES_SERVICE_PORT_HTTPS: "443"
+    config:
+      KubeSpawner:
+        # Increase HTTP client timeout for reflector to avoid timeouts
+        # when listing pods/events from Kubernetes API
+        http_timeout: 60
+
+    # Disable network policy to allow hub to communicate with K8s API server
+    networkPolicy:
+      enabled: false
+
+  singleuser:
+    # Override to use GHCR dev image
+    image:
+      name: ghcr.io/openlakes/core/jupyterhub-notebook
+      tag: "dev"
+      pullPolicy: Always  # Always pull latest dev image
+
+    # Disable network policy to allow notebook servers full cluster and internet access
+    networkPolicy:
+      enabled: false

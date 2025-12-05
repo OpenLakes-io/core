@@ -1,0 +1,114 @@
+{{- if .Values.meltano.enabled }}
+{{- $namespace := .Values.global.namespace }}
+{{- $fullname := .Values.meltano.fullnameOverride }}
+{{- $storageClass := .Values.meltano.persistence.storageClass | default .Values.global.storageClass }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ $fullname }}-bootstrap
+  namespace: {{ $namespace }}
+  labels:
+    app: meltano
+    layer: ingestion
+data:
+{{- if .Values.meltano.bootstrap.enabled }}
+  meltano.yml: |
+{{ .Values.meltano.bootstrap.meltanoYml | indent 4 }}
+{{- else }}
+  placeholder: ""
+{{- end }}
+
+{{- if .Values.meltano.persistence.size }}
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ $fullname }}-data
+  namespace: {{ $namespace }}
+  labels:
+    app: meltano
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: {{ .Values.meltano.persistence.size }}
+{{- if $storageClass }}
+  storageClassName: {{ $storageClass }}
+{{- end }}
+{{- end }}
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ $fullname }}
+  namespace: {{ $namespace }}
+  labels:
+    app: meltano
+    layer: ingestion
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: meltano
+  template:
+    metadata:
+      labels:
+        app: meltano
+        layer: ingestion
+    spec:
+      serviceAccountName: default
+      containers:
+        - name: meltano
+          image: {{ .Values.meltano.image.repository }}:{{ .Values.meltano.image.tag }}
+          imagePullPolicy: {{ .Values.meltano.image.pullPolicy }}
+          env:
+            - name: MELTANO_PROJECT_ROOT
+              value: /workspace/project
+            - name: MELTANO_BOOTSTRAP_DIR
+              value: /bootstrap
+            - name: MELTANO_S3_ENDPOINT
+              value: "{{ .Values.global.minio.endpoint }}"
+            - name: MELTANO_S3_ACCESS_KEY
+              value: "{{ .Values.global.minio.rootUser }}"
+            - name: MELTANO_S3_SECRET_KEY
+              value: "{{ .Values.global.minio.rootPassword }}"
+            - name: MELTANO_S3_BUCKET
+              value: "{{- if .Values.meltano.s3.bucket -}}{{ .Values.meltano.s3.bucket }}{{- else -}}openlakes{{- end }}"
+            - name: MELTANO_S3_PREFIX
+              value: "{{ .Values.meltano.s3.prefix }}"
+            - name: AWS_ACCESS_KEY_ID
+              value: "{{ .Values.global.minio.rootUser }}"
+            - name: AWS_SECRET_ACCESS_KEY
+              value: "{{ .Values.global.minio.rootPassword }}"
+            - name: AWS_ENDPOINT_URL
+              value: "{{ .Values.global.minio.endpoint }}"
+            - name: AWS_REGION
+              value: "us-east-1"
+{{- range .Values.meltano.env.extra }}
+            - name: {{ .name }}
+              value: {{ .value | quote }}
+{{- end }}
+          volumeMounts:
+            - name: meltano-project
+              mountPath: /workspace
+            - name: meltano-bootstrap
+              mountPath: /bootstrap
+          resources:
+            {{- toYaml .Values.meltano.resources | nindent 12 }}
+      volumes:
+        - name: meltano-bootstrap
+          configMap:
+            name: {{ $fullname }}-bootstrap
+            defaultMode: 0555
+        - name: meltano-project
+{{- if .Values.meltano.persistence.size }}
+          persistentVolumeClaim:
+            claimName: {{ $fullname }}-data
+{{- else }}
+          emptyDir: {}
+{{- end }}
+
+{{- end }}

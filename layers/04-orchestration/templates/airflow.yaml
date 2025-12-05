@@ -1,0 +1,559 @@
+{{- define "openlakes.airflowRemoteLoggingEnv" -}}
+{{- if .Values.airflow.logging.remoteEnabled }}
+- name: AIRFLOW__LOGGING__REMOTE_LOGGING
+  value: "True"
+- name: AIRFLOW__LOGGING__REMOTE_BASE_LOG_FOLDER
+  value: "s3://{{ .Values.airflow.logging.bucket }}"
+- name: AIRFLOW__LOGGING__REMOTE_LOG_CONN_ID
+  value: "aws_default"
+- name: AIRFLOW__LOGGING__ENCRYPT_S3_LOGS
+  value: "False"
+- name: AWS_ACCESS_KEY_ID
+  value: "{{ .Values.global.minio.rootUser }}"
+- name: AWS_SECRET_ACCESS_KEY
+  value: "{{ .Values.global.minio.rootPassword }}"
+- name: AWS_DEFAULT_REGION
+  value: "us-east-1"
+- name: AWS_ENDPOINT_URL
+  value: "{{ .Values.global.minio.endpoint }}"
+{{- end }}
+{{- end }}
+
+{{- if .Values.airflow.enabled }}
+---
+# ServiceAccount for Airflow to manage worker pods
+apiVersion: v1
+kind: ServiceAccount
+metadata:
+  name: {{ .Values.airflow.fullnameOverride }}-sa
+  namespace: {{ .Values.global.namespace }}
+
+---
+# Role for Airflow KubernetesExecutor to manage pods
+apiVersion: rbac.authorization.k8s.io/v1
+kind: Role
+metadata:
+  name: {{ .Values.airflow.fullnameOverride }}-role
+  namespace: {{ .Values.global.namespace }}
+rules:
+- apiGroups: [""]
+  resources: ["pods"]
+  verbs: ["get", "list", "watch", "create", "update", "patch", "delete"]
+- apiGroups: [""]
+  resources: ["pods/log"]
+  verbs: ["get", "list"]
+- apiGroups: [""]
+  resources: ["pods/exec"]
+  verbs: ["get", "create"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["list"]
+
+---
+# RoleBinding for Airflow ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: RoleBinding
+metadata:
+  name: {{ .Values.airflow.fullnameOverride }}-rolebinding
+  namespace: {{ .Values.global.namespace }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: Role
+  name: {{ .Values.airflow.fullnameOverride }}-role
+subjects:
+- kind: ServiceAccount
+  name: {{ .Values.airflow.fullnameOverride }}-sa
+  namespace: {{ .Values.global.namespace }}
+
+---
+# ClusterRole granting read-only pod visibility cluster-wide (needed for KubernetesExecutor watchers)
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Values.airflow.fullnameOverride }}-clusterrole
+rules:
+- apiGroups: [""]
+  resources: ["pods", "pods/log", "pods/status"]
+  verbs: ["get", "list", "watch"]
+- apiGroups: [""]
+  resources: ["events"]
+  verbs: ["list", "watch"]
+
+---
+# ClusterRoleBinding to attach cluster-wide reader role to Airflow ServiceAccount
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Values.airflow.fullnameOverride }}-clusterrolebinding
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Values.airflow.fullnameOverride }}-clusterrole
+subjects:
+- kind: ServiceAccount
+  name: {{ .Values.airflow.fullnameOverride }}-sa
+  namespace: {{ .Values.global.namespace }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.airflow.fullnameOverride }}-config
+  namespace: {{ .Values.global.namespace }}
+data:
+  airflow.cfg: |
+    [core]
+    executor = {{ .Values.airflow.executor }}
+    dags_folder = /opt/airflow/dags
+    load_examples = False
+
+    [database]
+    sql_alchemy_conn = postgresql+psycopg2://{{ .Values.airflow.database.user }}:{{ .Values.airflow.database.password }}@{{ .Values.airflow.database.host }}:{{ .Values.airflow.database.port }}/{{ .Values.airflow.database.name }}
+
+    [webserver]
+    base_url = http://localhost:8080
+    web_server_port = 8080
+
+    [api]
+    auth_backends = airflow.api.auth.backend.basic_auth
+
+    {{ if eq .Values.airflow.executor "KubernetesExecutor" }}
+    [kubernetes]
+    namespace = {{ .Values.airflow.kubernetes.namespace }}
+    pod_template_file = /opt/airflow/pod_templates/pod_template.yaml
+    worker_container_repository = {{ .Values.airflow.kubernetes.podTemplate.image.repository }}
+    worker_container_tag = {{ .Values.airflow.kubernetes.podTemplate.image.tag }}
+    delete_worker_pods = True
+    delete_worker_pods_on_failure = False
+    in_cluster = True
+    {{ end }}
+
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.airflow.fullnameOverride }}-sitecustomize
+  namespace: {{ .Values.global.namespace }}
+data:
+  sitecustomize.py: |-
+    import sys
+    import types
+
+    if "airflow.lineage.entities" not in sys.modules:
+        module = types.ModuleType("airflow.lineage.entities")
+
+        class File:
+            template_fields = ("url",)
+            # Minimal stub used when Airflow lineage extras are unavailable.
+            def __init__(self, url: str, **kwargs):
+                self.url = url
+                self.extra = kwargs
+
+        module.File = File
+        sys.modules["airflow.lineage.entities"] = module
+
+{{- if eq .Values.airflow.executor "KubernetesExecutor" }}
+---
+# Pod template for KubernetesExecutor worker pods
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.airflow.fullnameOverride }}-pod-template
+  namespace: {{ .Values.global.namespace }}
+data:
+  pod_template.yaml: |
+    apiVersion: v1
+    kind: Pod
+    metadata:
+      name: airflow-worker
+      namespace: {{ .Values.airflow.kubernetes.namespace }}
+    spec:
+      serviceAccountName: {{ .Values.airflow.fullnameOverride }}-sa
+      restartPolicy: Never
+      volumes:
+      - name: lineage-stub
+        configMap:
+          name: {{ .Values.airflow.fullnameOverride }}-sitecustomize
+      containers:
+      - name: base
+        image: {{ .Values.airflow.kubernetes.podTemplate.image.repository }}:{{ .Values.airflow.kubernetes.podTemplate.image.tag }}
+        imagePullPolicy: {{ .Values.airflow.kubernetes.podTemplate.image.pullPolicy | default (.Values.airflow.image.pullPolicy | default "IfNotPresent") }}
+        env:
+        - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+          value: "postgresql+psycopg2://{{ .Values.airflow.database.user }}:{{ .Values.airflow.database.password }}@{{ .Values.airflow.database.host }}:{{ .Values.airflow.database.port }}/{{ .Values.airflow.database.name }}"
+        - name: AIRFLOW__CORE__EXECUTOR
+          value: "KubernetesExecutor"
+        - name: PYTHONPATH
+          value: "/opt/airflow/python-stubs:/opt/airflow/dags/.deps"
+        - name: OPENLAKES_NOTEBOOK_ROOT
+          value: "/opt/airflow/dags/published"
+{{- include "openlakes.airflowRemoteLoggingEnv" . | indent 8 }}
+        volumeMounts:
+        - name: lineage-stub
+          mountPath: /opt/airflow/python-stubs
+        - name: dags
+          mountPath: /opt/airflow/dags
+        {{- if .Values.airflow.kubernetes.podTemplate.resources }}
+        resources:
+          {{- if .Values.airflow.kubernetes.podTemplate.resources.limits }}
+          limits:
+            {{- if .Values.airflow.kubernetes.podTemplate.resources.limits.memory }}
+            memory: {{ .Values.airflow.kubernetes.podTemplate.resources.limits.memory }}
+            {{- end }}
+            {{- if .Values.airflow.kubernetes.podTemplate.resources.limits.cpu }}
+            cpu: {{ .Values.airflow.kubernetes.podTemplate.resources.limits.cpu }}
+            {{- end }}
+          {{- end }}
+          {{- if .Values.airflow.kubernetes.podTemplate.resources.requests }}
+          requests:
+            {{- if .Values.airflow.kubernetes.podTemplate.resources.requests.memory }}
+            memory: {{ .Values.airflow.kubernetes.podTemplate.resources.requests.memory }}
+            {{- end }}
+            {{- if .Values.airflow.kubernetes.podTemplate.resources.requests.cpu }}
+            cpu: {{ .Values.airflow.kubernetes.podTemplate.resources.requests.cpu }}
+            {{- end }}
+          {{- end }}
+        {{- end }}
+      volumes:
+      - name: dags
+        persistentVolumeClaim:
+          claimName: {{ .Values.airflow.fullnameOverride }}-dags
+{{- end }}
+
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: {{ .Values.airflow.fullnameOverride }}-dags
+  namespace: {{ .Values.global.namespace }}
+spec:
+  accessModes:
+    - {{ default "ReadWriteMany" .Values.airflow.persistence.accessMode }}
+  storageClassName: {{ .Values.global.storageClass }}
+  resources:
+    requests:
+      storage: {{ .Values.airflow.persistence.size }}
+
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.airflow.fullnameOverride }}-db-migrate
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: airflow
+    component: db-migrate
+spec:
+  template:
+    metadata:
+      labels:
+        app: airflow
+        component: db-migrate
+    spec:
+      securityContext:
+        fsGroup: 50000
+        fsGroupChangePolicy: OnRootMismatch
+      restartPolicy: OnFailure
+      initContainers:
+      - name: wait-for-database
+        image: postgres:16
+        env:
+        - name: PGPASSWORD
+          value: "{{ .Values.airflow.database.password }}"
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          echo "Waiting for PostgreSQL to be ready..."
+          until pg_isready -h {{ .Values.airflow.database.host }} -p {{ .Values.airflow.database.port }} -U {{ .Values.airflow.database.user }}; do
+            echo "PostgreSQL not ready, waiting..."
+            sleep 5
+          done
+
+          echo "Waiting for '{{ .Values.airflow.database.name }}' database to exist..."
+          until psql -h {{ .Values.airflow.database.host }} -p {{ .Values.airflow.database.port }} -U {{ .Values.airflow.database.user }} -lqt | cut -d \| -f 1 | grep -qw {{ .Values.airflow.database.name }}; do
+            echo "Database '{{ .Values.airflow.database.name }}' not found, waiting..."
+            sleep 5
+          done
+          echo "Database '{{ .Values.airflow.database.name }}' exists!"
+      containers:
+      - name: db-migrate
+        image: {{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}
+        imagePullPolicy: {{ .Values.airflow.image.pullPolicy | default "IfNotPresent" }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -euo pipefail
+          # Run database migration (using migrate instead of upgrade for 3.1.2)
+          airflow db migrate
+        env:
+        - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+          value: "postgresql+psycopg2://{{ .Values.airflow.database.user }}:{{ .Values.airflow.database.password }}@{{ .Values.airflow.database.host }}:{{ .Values.airflow.database.port }}/{{ .Values.airflow.database.name }}"
+        - name: AIRFLOW__CORE__EXECUTOR
+          value: "{{ .Values.airflow.executor }}"
+        - name: AIRFLOW__CORE__LOAD_EXAMPLES
+          value: "False"
+        - name: AIRFLOW__CORE__DISABLED_PROVIDERS
+          value: "apache.airflow.providers.git"
+        - name: PYTHONPATH
+          value: "/opt/airflow/python-stubs:/opt/airflow/dags/.deps"
+        - name: OPENLAKES_NOTEBOOK_ROOT
+          value: "/opt/airflow/dags/published"
+{{- include "openlakes.airflowRemoteLoggingEnv" . | indent 8 }}
+        volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
+        - name: lineage-stub
+          mountPath: /opt/airflow/python-stubs
+      volumes:
+      - name: dags
+        persistentVolumeClaim:
+          claimName: {{ .Values.airflow.fullnameOverride }}-dags
+      - name: lineage-stub
+        configMap:
+          name: {{ .Values.airflow.fullnameOverride }}-sitecustomize
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.airflow.fullnameOverride }}-webserver
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: airflow
+    component: webserver
+spec:
+  replicas: {{ .Values.airflow.webserver.replicas }}
+  selector:
+    matchLabels:
+      app: airflow
+      component: webserver
+  template:
+    metadata:
+      labels:
+        app: airflow
+        component: webserver
+    spec:
+      securityContext:
+        fsGroup: 50000
+        fsGroupChangePolicy: OnRootMismatch
+      {{- if eq .Values.airflow.executor "KubernetesExecutor" }}
+      serviceAccountName: {{ .Values.airflow.fullnameOverride }}-sa
+      {{- end }}
+      containers:
+      - name: webserver
+        image: {{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}
+        imagePullPolicy: {{ .Values.airflow.image.pullPolicy | default "IfNotPresent" }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -euo pipefail
+          # Wait for db migration to complete
+          echo "Waiting for database migration to complete..."
+          sleep 30
+
+          # Start api-server (Airflow 3.x replaces webserver with api-server)
+          airflow api-server
+        ports:
+        - containerPort: 8080
+          name: http
+        env:
+        - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+          value: "postgresql+psycopg2://{{ .Values.airflow.database.user }}:{{ .Values.airflow.database.password }}@{{ .Values.airflow.database.host }}:{{ .Values.airflow.database.port }}/{{ .Values.airflow.database.name }}"
+        - name: AIRFLOW__CORE__EXECUTOR
+          value: "{{ .Values.airflow.executor }}"
+        - name: AIRFLOW__KUBERNETES__NAMESPACE
+          value: "{{ .Values.airflow.kubernetes.namespace }}"
+        - name: AIRFLOW__KUBERNETES__IN_CLUSTER
+          value: "True"
+        - name: AIRFLOW__CORE__LOAD_EXAMPLES
+          value: "False"
+        - name: AIRFLOW__CORE__DAGS_FOLDER
+          value: "/opt/airflow/dags"
+        - name: AIRFLOW__CORE__DISABLED_PROVIDERS
+          value: "apache.airflow.providers.git"
+        - name: PYTHONPATH
+          value: "/opt/airflow/python-stubs:/opt/airflow/dags/.deps"
+        - name: OPENLAKES_NOTEBOOK_ROOT
+          value: "/opt/airflow/dags/published"
+{{- include "openlakes.airflowRemoteLoggingEnv" . | indent 8 }}
+        volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
+        {{- if eq .Values.airflow.executor "KubernetesExecutor" }}
+        - name: pod-template
+          mountPath: /opt/airflow/pod_templates
+        {{- end }}
+        - name: lineage-stub
+          mountPath: /opt/airflow/python-stubs
+        resources:
+          {{- toYaml .Values.airflow.webserver.resources | nindent 10 }}
+        livenessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 5
+          failureThreshold: 3
+        readinessProbe:
+          tcpSocket:
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 3
+      volumes:
+      - name: dags
+        persistentVolumeClaim:
+          claimName: {{ .Values.airflow.fullnameOverride }}-dags
+      {{- if eq .Values.airflow.executor "KubernetesExecutor" }}
+      - name: pod-template
+        configMap:
+          name: {{ .Values.airflow.fullnameOverride }}-pod-template
+      {{- end }}
+      - name: lineage-stub
+        configMap:
+          name: {{ .Values.airflow.fullnameOverride }}-sitecustomize
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.airflow.fullnameOverride }}-scheduler
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: airflow
+    component: scheduler
+spec:
+  replicas: {{ .Values.airflow.scheduler.replicas }}
+  selector:
+    matchLabels:
+      app: airflow
+      component: scheduler
+  template:
+    metadata:
+      labels:
+        app: airflow
+        component: scheduler
+    spec:
+      securityContext:
+        fsGroup: 50000
+        fsGroupChangePolicy: OnRootMismatch
+      {{- if .Values.airflow.logging.remoteEnabled }}
+      initContainers:
+      - name: create-logs-bucket
+        image: minio/mc:latest
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          echo "Configuring MinIO client..."
+          mc alias set myminio {{ .Values.global.minio.endpoint }} {{ .Values.global.minio.rootUser }} {{ .Values.global.minio.rootPassword }}
+
+          echo "Ensuring bucket {{ .Values.airflow.logging.bucket }} exists..."
+          if mc ls myminio/{{ .Values.airflow.logging.bucket }} 2>/dev/null; then
+            echo "Bucket {{ .Values.airflow.logging.bucket }} already present"
+          else
+            mc mb myminio/{{ .Values.airflow.logging.bucket }}
+            echo "Created bucket {{ .Values.airflow.logging.bucket }}"
+          fi
+      {{- end }}
+      {{- if eq .Values.airflow.executor "KubernetesExecutor" }}
+      serviceAccountName: {{ .Values.airflow.fullnameOverride }}-sa
+      {{- end }}
+      containers:
+      - name: scheduler
+        image: {{ .Values.airflow.image.repository }}:{{ .Values.airflow.image.tag }}
+        imagePullPolicy: {{ .Values.airflow.image.pullPolicy | default "IfNotPresent" }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -euo pipefail
+          # Wait for db migration to complete
+          echo "Waiting for database migration to complete..."
+          sleep 30
+
+          # Start scheduler
+          airflow scheduler
+        env:
+        - name: AIRFLOW__DATABASE__SQL_ALCHEMY_CONN
+          value: "postgresql+psycopg2://{{ .Values.airflow.database.user }}:{{ .Values.airflow.database.password }}@{{ .Values.airflow.database.host }}:{{ .Values.airflow.database.port }}/{{ .Values.airflow.database.name }}"
+        - name: AIRFLOW__CORE__EXECUTOR
+          value: "{{ .Values.airflow.executor }}"
+        - name: AIRFLOW__KUBERNETES__NAMESPACE
+          value: "{{ .Values.airflow.kubernetes.namespace }}"
+        - name: AIRFLOW__KUBERNETES__IN_CLUSTER
+          value: "True"
+        - name: AIRFLOW__CORE__LOAD_EXAMPLES
+          value: "False"
+        - name: AIRFLOW__CORE__DAGS_FOLDER
+          value: "/opt/airflow/dags"
+        - name: AIRFLOW__CORE__DISABLED_PROVIDERS
+          value: "apache.airflow.providers.git"
+        - name: PYTHONPATH
+          value: "/opt/airflow/python-stubs:/opt/airflow/dags/.deps"
+        - name: OPENLAKES_NOTEBOOK_ROOT
+          value: "/opt/airflow/dags/published"
+{{- include "openlakes.airflowRemoteLoggingEnv" . | indent 8 }}
+        volumeMounts:
+        - name: dags
+          mountPath: /opt/airflow/dags
+        {{- if eq .Values.airflow.executor "KubernetesExecutor" }}
+        - name: pod-template
+          mountPath: /opt/airflow/pod_templates
+        {{- end }}
+        - name: lineage-stub
+          mountPath: /opt/airflow/python-stubs
+        resources:
+          {{- toYaml .Values.airflow.scheduler.resources | nindent 10 }}
+        livenessProbe:
+          exec:
+            command:
+            - /bin/bash
+            - -c
+            - |
+              airflow jobs check --job-type SchedulerJob --hostname $(hostname)
+          initialDelaySeconds: 120
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 5
+      volumes:
+      - name: dags
+        persistentVolumeClaim:
+          claimName: {{ .Values.airflow.fullnameOverride }}-dags
+      {{- if eq .Values.airflow.executor "KubernetesExecutor" }}
+      - name: pod-template
+        configMap:
+          name: {{ .Values.airflow.fullnameOverride }}-pod-template
+      {{- end }}
+      - name: lineage-stub
+        configMap:
+          name: {{ .Values.airflow.fullnameOverride }}-sitecustomize
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.airflow.fullnameOverride }}-webserver
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: airflow
+    component: webserver
+spec:
+  type: {{ .Values.global.networking.type | default "ClusterIP" }}
+  selector:
+    app: airflow
+    component: webserver
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    {{- if eq (.Values.global.networking.type | default "ClusterIP") "NodePort" }}
+    nodePort: {{ .Values.airflow.webserver.nodePort }}
+    {{- end }}
+{{- end }}

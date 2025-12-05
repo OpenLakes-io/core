@@ -1,0 +1,16 @@
+# Extra dependencies baked into the OpenLakes Airflow runtime image.
+#
+# These packages match the list previously installed on every pod start via
+# Helm templates. Baking them into the container drastically reduces startup
+# times and avoids transient network failures during deployment.
+
+apache-airflow-providers-papermill==3.8.1
+apache-airflow-providers-apache-spark==5.4.0
+apache-airflow-providers-common-compat==1.10.0
+apache-airflow-providers-amazon==9.16.0
+papermill==2.6.0
+pyspark==3.5.4
+grpcio-status==1.76.0
+trino==0.328.0
+kafka-python==2.0.2
+protobuf>=6.31.1,<7.0

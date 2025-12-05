@@ -1,0 +1,146 @@
+{{- if .Values.nessie.enabled }}
+{{- $pgHost := .Values.global.services.postgresql.host }}
+{{- $pgPort := .Values.global.services.postgresql.port }}
+{{- $pgDatabase := .Values.nessie.versionStore.jdbc.database | default "nessie" }}
+{{- $pgUrl := .Values.nessie.versionStore.jdbc.url | default (printf "jdbc:postgresql://%s:%v/%s" $pgHost $pgPort $pgDatabase) }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.nessie.fullnameOverride }}-config
+  namespace: {{ .Values.global.namespace }}
+  {{- with .Values.global.tenant }}
+  labels:
+    openlakes.io/tenant: {{ . }}
+  {{- end }}
+data:
+  application.properties: |
+    # Nessie version store configuration
+    nessie.version.store.type={{ .Values.nessie.versionStore.type }}
+
+    # PostgreSQL JDBC configuration
+    quarkus.datasource.jdbc.url={{ $pgUrl }}
+    quarkus.datasource.username={{ .Values.nessie.versionStore.jdbc.username }}
+    quarkus.datasource.password={{ .Values.nessie.versionStore.jdbc.password }}
+    quarkus.datasource.db-kind=postgresql
+
+    # HTTP server configuration
+    quarkus.http.port=19120
+    quarkus.management.port=9000
+
+    # Logging
+    quarkus.log.level=INFO
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.nessie.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: nessie
+    component: catalog
+    {{- with .Values.global.tenant }}
+    openlakes.io/tenant: {{ . }}
+    {{- end }}
+spec:
+  replicas: {{ .Values.nessie.replicas }}
+  selector:
+    matchLabels:
+      app: nessie
+  template:
+    metadata:
+      labels:
+        app: nessie
+        component: catalog
+        {{- with .Values.global.tenant }}
+        openlakes.io/tenant: {{ . }}
+        {{- end }}
+    spec:
+      initContainers:
+      # Wait for PostgreSQL to be ready
+      - name: wait-for-postgres
+        image: postgres:16
+        command:
+          - sh
+          - -c
+          - |
+            until pg_isready -h {{ $pgHost }} -p {{ $pgPort }} -U {{ .Values.nessie.versionStore.jdbc.username }}; do
+              echo "Waiting for PostgreSQL..."
+              sleep 2
+            done
+            echo "PostgreSQL is ready"
+        env:
+        - name: PGPASSWORD
+          value: "{{ .Values.nessie.versionStore.jdbc.password }}"
+
+      containers:
+      - name: nessie
+        image: {{ .Values.nessie.image.repository }}:{{ .Values.nessie.image.tag }}
+        ports:
+        - containerPort: 19120
+          name: http
+        - containerPort: 9000
+          name: management
+        volumeMounts:
+        - name: config
+          mountPath: /deployments/config
+        env:
+        - name: QUARKUS_CONFIG_LOCATIONS
+          value: /deployments/config/application.properties
+        # AWS/S3 configuration for Iceberg table storage
+        - name: AWS_ACCESS_KEY_ID
+          value: "admin"
+        - name: AWS_SECRET_ACCESS_KEY
+          value: "admin123"
+        - name: AWS_REGION
+          value: "us-east-1"
+        {{- if .Values.nessie.resources }}
+        resources:
+          {{- toYaml .Values.nessie.resources | nindent 10 }}
+        {{- end }}
+        readinessProbe:
+          httpGet:
+            path: /api/v1/config
+            port: 19120
+          initialDelaySeconds: 30
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 6
+        livenessProbe:
+          httpGet:
+            path: /api/v1/config
+            port: 19120
+          initialDelaySeconds: 45
+          periodSeconds: 20
+          timeoutSeconds: 5
+          failureThreshold: 6
+
+      volumes:
+      - name: config
+        configMap:
+          name: {{ .Values.nessie.fullnameOverride }}-config
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.nessie.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: nessie
+spec:
+  type: {{ .Values.global.networking.type | default "ClusterIP" }}
+  selector:
+    app: nessie
+  ports:
+  - name: http
+    port: 19120
+    targetPort: 19120
+    {{- if eq (.Values.global.networking.type | default "ClusterIP") "NodePort" }}
+    nodePort: {{ .Values.nessie.service.nodePort }}
+    {{- end }}
+  - name: management
+    port: 9000
+    targetPort: 9000
+{{- end }}

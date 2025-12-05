@@ -1,0 +1,6 @@
+apiVersion: v2
+name: openlakes-streaming
+version: 1.0.0
+description: OpenLakes streaming layer - real-time data processing
+type: application
+

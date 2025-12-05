@@ -1,0 +1,5 @@
+apiVersion: v2
+name: ingestion
+version: 1.0.0
+description: OpenLakes ingestion layer - data connectors and CDC
+type: application

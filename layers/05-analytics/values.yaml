@@ -1,0 +1,198 @@
+global:
+  networking:
+    type: ClusterIP  # Service type (ClusterIP + Ingress for external access via Traefik)
+    ingressClass: traefik
+    domain: openlakes.dev
+    enableIngressRoutes: true  # Create Traefik IngressRoutes for hostname routing
+  storageClass: longhorn
+  namespace: openlakes
+  # Optional tenant identifier for multi-tenant deployments
+  tenant: ""
+  # Service references (should match layer 01-infrastructure or be overridden)
+  services:
+    postgresql:
+      host: infrastructure-postgres
+      port: 5432
+    minio:
+      host: infrastructure-minio
+      port: 9000
+      endpoint: http://infrastructure-minio:9000
+  # Legacy minio config (for backwards compatibility)
+  minio:
+    endpoint: http://infrastructure-minio:9000
+    rootUser: admin
+    rootPassword: admin123
+
+superset:
+  enabled: true
+  fullnameOverride: analytics-superset
+  image:
+    # OpenLakes Core uses official Apache Superset image
+    # For custom drivers/connectors, use OpenLakes Pier
+    repository: apache/superset
+    tag: "4.1.1"
+  service:
+    type: ClusterIP  # Changed from NodePort - access via superset.openlakes.dev
+  # Ingress routing: superset.openlakes.dev → Superset UI
+  database:
+    host: infrastructure-postgres
+    port: 5432
+    name: superset
+    user: openlakes
+    password: openlakes123
+#    limits:
+  auth:
+    adminUser: admin
+    adminPassword: admin123
+    adminEmail: admin@openlakes.dev
+
+jupyterhub:
+  enabled: true
+  fullnameOverride: analytics-jupyter
+
+  # Configure prePuller for multi-node optimization
+  prePuller:
+    hook:
+      enabled: true
+    continuous:
+      enabled: true
+
+  # Hub configuration
+  hub:
+    # Database - using SQLite for simplicity (production should use PostgreSQL)
+    db:
+      type: sqlite-pvc
+      pvc:
+        storageClassName: longhorn
+        storage: 1Gi
+
+    # Hub container configuration
+    image:
+      name: quay.io/jupyterhub/k8s-hub
+      tag: "4.3.1"
+
+    # Force IPv4 access to the Kubernetes API to avoid dual-stack timeouts
+    extraEnv:
+      KUBERNETES_SERVICE_HOST: "10.43.0.1"
+      KUBERNETES_SERVICE_PORT: "443"
+      KUBERNETES_SERVICE_PORT_HTTPS: "443"
+
+    # Hub service configuration
+    service:
+      type: ClusterIP
+
+    # Authentication - simple password for development
+    config:
+      JupyterHub:
+        authenticator_class: dummy
+      DummyAuthenticator:
+        password: "openlakes"
+      Authenticator:
+        admin_users:
+          - admin
+        allowed_users:
+          - admin
+
+    # Allow hub to reach the Kubernetes API (disable default restrictive policy)
+    networkPolicy:
+      enabled: false
+
+    # Hub resources
+    resources:
+      requests:
+        cpu: 200m
+        memory: 512Mi
+      limits:
+        cpu: 1000m
+        memory: 1Gi
+
+  # Proxy configuration (required for routing)
+  proxy:
+    service:
+      type: NodePort
+      nodePorts:
+        http: 30888
+
+    secretToken: "openmetadata-secret-token-replace-in-production"
+
+    chp:
+      image:
+        name: quay.io/jupyterhub/configurable-http-proxy
+        tag: "5.1.0"
+      resources:
+        requests:
+          cpu: 100m
+          memory: 128Mi
+        limits:
+          cpu: 500m
+          memory: 256Mi
+
+  # Singleuser (notebook) configuration
+  singleuser:
+    # Custom notebook pod image - includes Spark 4.1.0, Iceberg, S3A, and OpenLakes dependencies
+    image:
+      name: ghcr.io/openlakes/core/jupyterhub-notebook
+      tag: "1.0.0"  # Custom OpenLakes image matching Spark cluster version
+
+    # Default to JupyterLab interface
+    defaultUrl: "/lab"
+
+    # Network policy - DISABLED (blocks JupyterHub from spawning user pods)
+    # The default network policies prevent JupyterHub hub from accessing the Kubernetes API
+    # which is required to create user notebook pods
+    networkPolicy:
+      enabled: false
+      # egressAllowRules:
+      #   # Allow DNS lookups
+      #   dnsPortsCloudMetadataServer: true
+      #   dnsPortsKubeSystemNamespace: true
+      #   dnsPortsPrivateIPs: true
+      #   # Allow access to private IPs (MinIO, Spark, Trino, Kafka, PostgreSQL)
+      #   privateIPs: true
+      #   # Block access to cloud metadata server
+      #   cloudMetadataServer: false
+      #   # Block access to public internet (uncomment next line if internet access needed)
+      #   # nonPrivateIPs: true
+
+    # Storage for user notebooks
+    storage:
+      type: dynamic
+      dynamic:
+        storageClass: longhorn
+        pvcNameTemplate: "claim-{username}"
+        volumeNameTemplate: "volume-{username}"
+      capacity: 10Gi
+      homeMountPath: /home/jovyan
+
+      # Additional volumes - mount shared examples PVC (JupyterHub chart expects maps)
+      extraVolumes:
+        shared-examples:
+          name: shared-examples
+          persistentVolumeClaim:
+            claimName: analytics-jupyter-examples
+      extraVolumeMounts:
+        shared-examples:
+          name: shared-examples
+          mountPath: /home/jovyan/examples
+          readOnly: true
+    extraEnv:
+      OPENLAKES_NOTEBOOK_BUCKET: "openlakes-notebooks"
+      OPENLAKES_NOTEBOOK_SHARED_PREFIX: "shared"
+      OPENLAKES_NOTEBOOK_WORKSPACE_PREFIX: "workspace"
+      OPENLAKES_NOTEBOOK_PUBLISHED_PREFIX: "published"
+      OPENLAKES_NOTEBOOK_ARTIFACT_PREFIX: "artifacts"
+      OPENLAKES_MINIO_ENDPOINT: "http://infrastructure-minio:9000"
+      OPENLAKES_MINIO_ACCESS_KEY: "admin"
+      OPENLAKES_MINIO_SECRET_KEY: "admin123"
+
+notebooks:
+  bucket: openlakes-notebooks
+  prefixes:
+    shared: shared
+    workspace: workspace
+    published: published
+  sync:
+    downloadSchedule: "*/2 * * * *"
+    uploadSchedule: "*/5 * * * *"
+
+# Example notebooks are now synced from MinIO and mirrored to user pods

@@ -1,0 +1,12 @@
+# Dev environment overrides for Layer 01 - Infrastructure
+#
+# Usage: helm upgrade --install 01-infrastructure ./layers/01-infrastructure \
+#          --namespace openlakes \
+#          --values layers/01-infrastructure/values.yaml \
+#          --values layers/01-infrastructure/values-dev.yaml
+
+dashboard:
+  image:
+    repository: ghcr.io/openlakes/core/openlakes-dashboard
+    tag: "dev"
+    pullPolicy: Always  # Always pull latest dev image

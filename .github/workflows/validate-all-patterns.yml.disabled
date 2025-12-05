@@ -1,0 +1,143 @@
+name: Validate All Patterns
+
+on:
+  pull_request:
+    branches: [ main ]
+  push:
+    branches: [ main, develop ]
+  workflow_dispatch:
+
+env:
+  NAMESPACE: openlakes
+
+jobs:
+  integration-tests:
+    name: Full Stack Integration Tests
+    runs-on: LinuxK3sDefault
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Kubernetes (K3s)
+        run: |
+          curl -sfL https://get.k3s.io | sh -s - --write-kubeconfig-mode 644
+          mkdir -p ~/.kube
+          sudo cp /etc/rancher/k3s/k3s.yaml ~/.kube/config
+          sudo chown $USER ~/.kube/config
+          kubectl wait --for=condition=Ready nodes --all --timeout=60s
+
+      - name: Install Helm
+        run: |
+          curl https://raw.githubusercontent.com/helm/helm/main/scripts/get-helm-3 | bash
+
+      - name: Deploy OpenLakes Core
+        run: |
+          ./deploy-openlakes.sh --env dev --timeout 30m
+
+      - name: Wait for Pods Ready
+        run: |
+          kubectl wait --for=condition=ready pod --all -n openlakes --timeout=1200s
+
+      - name: Run L1 Deployment Test
+        run: |
+          chmod +x tests/01-deployment-test.sh
+          ./tests/01-deployment-test.sh
+
+      - name: Run L1 Connectivity Test
+        run: |
+          chmod +x tests/02-connectivity-test.sh
+          ./tests/02-connectivity-test.sh
+
+      - name: Setup Python
+        uses: actions/setup-python@v4
+        with:
+          python-version: '3.10'
+
+      - name: Install Python Dependencies
+        run: |
+          pip install jupyter nbconvert ipykernel pyspark
+
+      - name: Install GNU Parallel
+        run: |
+          sudo apt-get update && sudo apt-get install -y parallel
+
+      - name: Execute All Notebooks in Parallel
+        run: |
+          # Create a list of all notebook paths
+          find examples/notebooks -name "*.ipynb" -type f | sort > notebooks.txt
+
+          # Execute notebooks in parallel (8 at a time to not overwhelm the cluster)
+          cat notebooks.txt | parallel -j 8 --line-buffer --tagstring '{/.}' \
+            "jupyter nbconvert --execute --to notebook --inplace \
+             --ExecutePreprocessor.timeout=600 {} && \
+             echo '✅ {/.}' || echo '❌ {/.}'"
+
+      - name: Generate Test Report
+        if: always()
+        run: |
+          echo "# OpenLakes Pattern Validation Report" > test-report.md
+          echo "" >> test-report.md
+          echo "**Generated**: $(date)" >> test-report.md
+          echo "**Branch**: ${{ github.ref }}" >> test-report.md
+          echo "**Commit**: ${{ github.sha }}" >> test-report.md
+          echo "" >> test-report.md
+          echo "## Execution Summary" >> test-report.md
+          echo "" >> test-report.md
+
+          # Count total notebooks
+          TOTAL=$(find examples/notebooks -name "*.ipynb" -type f | wc -l)
+          echo "Total notebooks: $TOTAL" >> test-report.md
+          echo "" >> test-report.md
+
+          # List all notebooks by category
+          echo "### Batch ETL (6 patterns)" >> test-report.md
+          ls -1 examples/notebooks/01-batch-etl/*.ipynb | xargs -n1 basename >> test-report.md
+          echo "" >> test-report.md
+
+          echo "### Streaming (8 patterns)" >> test-report.md
+          ls -1 examples/notebooks/02-streaming/*.ipynb | xargs -n1 basename >> test-report.md
+          echo "" >> test-report.md
+
+          echo "### Lambda Architecture (2 patterns)" >> test-report.md
+          ls -1 examples/notebooks/03-lambda/*.ipynb | xargs -n1 basename >> test-report.md
+          echo "" >> test-report.md
+
+          echo "### Federated Queries (3 patterns)" >> test-report.md
+          ls -1 examples/notebooks/04-federated/*.ipynb | xargs -n1 basename >> test-report.md
+          echo "" >> test-report.md
+
+          echo "### Analytics & BI (4 patterns)" >> test-report.md
+          ls -1 examples/notebooks/05-analytics-bi/*.ipynb | xargs -n1 basename >> test-report.md
+          echo "" >> test-report.md
+
+          echo "### Log Analytics (3 patterns)" >> test-report.md
+          ls -1 examples/notebooks/06-log-event/*.ipynb | xargs -n1 basename >> test-report.md
+          echo "" >> test-report.md
+
+          echo "### Data Governance (4 patterns)" >> test-report.md
+          ls -1 examples/notebooks/07-governance/*.ipynb | xargs -n1 basename >> test-report.md
+          echo "" >> test-report.md
+
+          echo "### Lakehouse Maintenance (4 patterns)" >> test-report.md
+          ls -1 examples/notebooks/08-maintenance/*.ipynb | xargs -n1 basename >> test-report.md
+
+      - name: Upload Test Report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-report
+          path: test-report.md
+
+      - name: Collect Logs on Failure
+        if: failure()
+        run: |
+          kubectl get pods -n openlakes
+          kubectl describe pods -n openlakes
+          kubectl logs -n openlakes --all-containers --tail=1000 > cluster-logs.txt
+
+      - name: Upload Logs
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: cluster-logs
+          path: cluster-logs.txt

@@ -1,0 +1,120 @@
+{{- if .Values.spark.enabled }}
+---
+# Master Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.spark.fullnameOverride }}-master
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    component: master
+    layer: compute
+spec:
+  type: {{ .Values.global.networking.type }}
+  {{- if eq .Values.global.networking.type "NodePort" }}
+  ports:
+  - port: 7077
+    targetPort: 7077
+    protocol: TCP
+    name: master
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: webui
+    nodePort: {{ .Values.spark.master.nodePort }}
+  - port: 4040
+    targetPort: 4040
+    protocol: TCP
+    name: driver-ui
+  {{- else if eq .Values.global.networking.type "LoadBalancer" }}
+  ports:
+  - port: 7077
+    targetPort: 7077
+    protocol: TCP
+    name: master
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: webui
+  - port: 4040
+    targetPort: 4040
+    protocol: TCP
+    name: driver-ui
+  {{- else }}
+  ports:
+  - port: 7077
+    targetPort: 7077
+    protocol: TCP
+    name: master
+  - port: 8080
+    targetPort: 8080
+    protocol: TCP
+    name: webui
+  - port: 4040
+    targetPort: 4040
+    protocol: TCP
+    name: driver-ui
+  {{- end }}
+  selector:
+    app: spark
+    component: master
+---
+# Worker Headless Service for StatefulSet
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.spark.fullnameOverride }}-worker-headless
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    component: worker
+    layer: compute
+spec:
+  clusterIP: None
+  sessionAffinity: None  # Explicitly disable (not applicable to headless services)
+  ports:
+  - port: 7078
+    targetPort: 7078
+    protocol: TCP
+    name: worker
+  - port: 8081
+    targetPort: 8081
+    protocol: TCP
+    name: webui
+  selector:
+    app: spark
+    component: worker
+---
+# Worker NodePort Service for UI access (optional)
+{{- if .Values.spark.worker.exposeUI }}
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.spark.fullnameOverride }}-worker-ui
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: spark
+    component: worker-ui
+    layer: compute
+spec:
+  type: {{ .Values.global.networking.type }}
+  {{- if eq .Values.global.networking.type "NodePort" }}
+  ports:
+  - port: 8081
+    targetPort: 8081
+    protocol: TCP
+    name: webui
+    nodePort: {{ .Values.spark.worker.nodePort }}
+  {{- else }}
+  ports:
+  - port: 8081
+    targetPort: 8081
+    protocol: TCP
+    name: webui
+  {{- end }}
+  selector:
+    app: spark
+    component: worker
+{{- end }}
+{{- end }}

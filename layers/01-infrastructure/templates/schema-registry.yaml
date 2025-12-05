@@ -1,0 +1,99 @@
+{{- if .Values.schemaRegistry.enabled }}
+{{- $kafkaBootstrap := .Values.schemaRegistry.kafka.bootstrapServers | default .Values.global.services.kafka.bootstrapServers }}
+---
+# ═══════════════════════════════════════════════════════════════
+# Kafka Schema Registry (Apicurio)
+# ═══════════════════════════════════════════════════════════════
+# Provides Confluent-compatible REST API backed by Apicurio Registry
+# Uses KafkaSQL storage so all schemas reside inside Kafka topics
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.schemaRegistry.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: schema-registry
+    component: schema-registry
+    {{- with .Values.global.tenant }}
+    openlakes.io/tenant: {{ . }}
+    {{- end }}
+spec:
+  replicas: {{ .Values.schemaRegistry.replicas }}
+  selector:
+    matchLabels:
+      app: schema-registry
+  template:
+    metadata:
+      labels:
+        app: schema-registry
+        {{- with .Values.global.tenant }}
+        openlakes.io/tenant: {{ . }}
+        {{- end }}
+    spec:
+      containers:
+      - name: schema-registry
+        image: {{ .Values.schemaRegistry.image.repository }}:{{ .Values.schemaRegistry.image.tag }}
+        ports:
+        - name: http
+          containerPort: {{ .Values.schemaRegistry.service.port }}
+          protocol: TCP
+        env:
+        - name: QUARKUS_HTTP_PORT
+          value: "{{ .Values.schemaRegistry.service.port }}"
+        - name: QUARKUS_HTTP_HOST
+          value: "0.0.0.0"
+        - name: QUARKUS_LOG_LEVEL
+          value: "{{ .Values.schemaRegistry.loggingLevel | default "INFO" }}"
+        - name: APICURIO_STORAGE_KIND
+          value: "kafkasql"
+        - name: APICURIO_KAFKA_COMMON_BOOTSTRAP_SERVERS
+          value: "{{ $kafkaBootstrap }}"
+        - name: APICURIO_KAFKASQL_BOOTSTRAP_SERVERS
+          value: "{{ $kafkaBootstrap }}"
+        - name: KAFKA_BOOTSTRAP_SERVERS
+          value: "{{ $kafkaBootstrap }}"
+        - name: APICURIO_KAFKASQL_TOPIC
+          value: "{{ .Values.schemaRegistry.kafka.topic }}"
+        - name: APICURIO_KAFKASQL_TOPIC_REPLICATION_FACTOR
+          value: "{{ .Values.schemaRegistry.kafka.replicationFactor }}"
+        - name: JAVA_OPTIONS
+          value: "-Dquarkus.http.host=0.0.0.0"
+        livenessProbe:
+          httpGet:
+            path: /health/live
+            port: {{ .Values.schemaRegistry.service.port }}
+          initialDelaySeconds: 60
+          periodSeconds: 30
+          timeoutSeconds: 10
+          failureThreshold: 6
+        readinessProbe:
+          httpGet:
+            path: /health/ready
+            port: {{ .Values.schemaRegistry.service.port }}
+          initialDelaySeconds: 45
+          periodSeconds: 15
+          timeoutSeconds: 10
+          failureThreshold: 6
+        resources:
+          {{- toYaml .Values.schemaRegistry.resources | nindent 10 }}
+
+---
+# Kafka Schema Registry Service
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.schemaRegistry.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: schema-registry
+    component: kafka-schema-registry
+spec:
+  type: {{ .Values.schemaRegistry.service.type }}
+  ports:
+  - name: http
+    port: {{ .Values.schemaRegistry.service.port }}
+    targetPort: {{ .Values.schemaRegistry.service.port }}
+    protocol: TCP
+  selector:
+    app: schema-registry
+{{- end }}

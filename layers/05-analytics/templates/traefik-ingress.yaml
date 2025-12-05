@@ -1,0 +1,109 @@
+{{- if .Values.global.networking.enableIngressRoutes }}
+---
+# ═══════════════════════════════════════════════════════════════
+# Superset - Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access Superset UI at: http://superset.openlakes.local
+{{- if .Values.superset.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: analytics-superset
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: superset
+    layer: analytics
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`superset.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: analytics-superset
+          port: 8088  # Superset UI port
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# JupyterHub - Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access JupyterHub at: http://jupyter.openlakes.local
+{{- if .Values.jupyterhub.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: analytics-jupyterhub
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: jupyterhub
+    layer: analytics
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`jupyter.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: analytics-jupyter-proxy-public
+          port: 80  # JupyterHub proxy port
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# Superset - Secure Ingress Route (HTTPS)
+# ═══════════════════════════════════════════════════════════════
+# Access Superset UI at: https://superset.openlakes.dev
+{{- if .Values.superset.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: analytics-superset-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: superset
+    layer: analytics
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`superset.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: analytics-superset
+          port: 8088
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: superset.{{ .Values.global.networking.domain }}
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# JupyterHub - Secure Ingress Route (HTTPS)
+# ═══════════════════════════════════════════════════════════════
+# Access JupyterHub at: https://jupyter.openlakes.dev
+{{- if .Values.jupyterhub.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: analytics-jupyterhub-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: jupyterhub
+    layer: analytics
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`jupyter.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: analytics-jupyter-proxy-public
+          port: 80
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: jupyter.{{ .Values.global.networking.domain }}
+{{- end }}
+{{- end }}

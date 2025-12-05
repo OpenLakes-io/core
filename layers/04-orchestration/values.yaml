@@ -1,0 +1,148 @@
+global:
+  networking:
+    type: ClusterIP  # Service type (ClusterIP + Ingress for external access via Traefik)
+    ingressClass: traefik
+    domain: openlakes.dev
+    enableIngressRoutes: true  # Create Traefik IngressRoutes for hostname routing
+  storageClass: longhorn
+  namespace: openlakes
+  # Optional tenant identifier for multi-tenant deployments
+  tenant: ""
+  # Service references (should match layer 01-infrastructure or be overridden)
+  services:
+    postgresql:
+      host: infrastructure-postgres
+      port: 5432
+    minio:
+      host: infrastructure-minio
+      port: 9000
+      endpoint: http://infrastructure-minio:9000
+  # Legacy minio config (for backwards compatibility)
+  minio:
+    endpoint: http://infrastructure-minio:9000
+    rootUser: admin
+    rootPassword: admin123
+
+airflow:
+  enabled: true
+  fullnameOverride: orchestration-airflow
+  image:
+    repository: ghcr.io/openlakes/core/airflow-runtime
+    tag: "1.0.0"
+    pullPolicy: Always
+  executor: KubernetesExecutor
+
+  logging:
+    remoteEnabled: true
+    bucket: orchestration-airflow-logs
+
+  # Mount example notebooks as ConfigMap
+  extraVolumes:
+    - name: openlakes-notebooks
+      configMap:
+        name: openlakes-example-notebooks
+        optional: true
+
+  extraVolumeMounts:
+    - name: openlakes-notebooks
+      mountPath: /opt/airflow/notebooks
+      readOnly: true
+
+  webserver:
+    serviceType: ClusterIP  # Changed from NodePort - access via airflow.openlakes.dev
+  # Ingress routing: airflow.openlakes.dev → Airflow UI
+    replicas: 1
+#      limits:
+  scheduler:
+    replicas: 1
+#      limits:
+  database:
+    host: infrastructure-postgres
+    port: 5432
+    name: airflow
+    user: openlakes
+    password: openlakes123
+  persistence:
+    size: 10Gi
+  auth:
+    adminUser: admin
+    adminPassword: admin123
+    adminEmail: admin@openlakes.dev
+
+  # ═══════════════════════════════════════════════════════════════
+  # Metrics Configuration - StatsD Integration (OpenLakes v1.0.0)
+  # ═══════════════════════════════════════════════════════════════
+  # Enables comprehensive Airflow metrics export to Prometheus
+  # via StatsD exporter deployed in Layer 08 (Monitoring)
+  #
+  # Metrics include:
+  #   - DAG run success/failure rates and duration
+  #   - Task instance states and execution time
+  #   - Scheduler performance (heartbeat, task queues)
+  #   - Executor metrics (open/queued/running tasks)
+  #   - Pool utilization
+  #   - DAG processing times
+  #
+  # Metrics exposed at: http://monitoring-statsd-exporter:9102/metrics
+  # Grafana dashboard: "OpenLakes - Airflow Orchestration"
+  statsd:
+    enabled: true
+    host: monitoring-statsd-exporter.openlakes.svc.cluster.local
+    port: 9125
+    prefix: airflow
+
+  # KubernetesExecutor configuration
+  kubernetes:
+    namespace: openlakes
+    podTemplate:
+      image:
+        repository: ghcr.io/openlakes/core/airflow-runtime
+        tag: "1.0.0"
+        pullPolicy: Always
+#      resources:
+#        limits:
+#          memory: 1Gi
+#          cpu: 1000m
+#        requests:
+#          memory: 512Mi
+#          cpu: 500m
+
+notebooks:
+  bucket: openlakes-notebooks
+  prefixes:
+    shared: shared
+    published: published
+  sync:
+    airflowSchedule: "*/3 * * * *"
+
+openmetadataIngestion:
+  enabled: false  # Moved to layer 07-catalog
+  fullnameOverride: 04-orchestration-ingestion
+  image:
+    repository: openmetadata/ingestion
+    tag: "1.10.7"
+    pullPolicy: IfNotPresent
+  webserver:
+    serviceType: ClusterIP  # Changed from NodePort
+    replicas: 1
+#      limits:
+  scheduler:
+    replicas: 1
+#      limits:
+  database:
+    host: infrastructure-postgres
+    port: 5432
+    name: openmetadata_airflow
+    user: openlakes
+    password: openlakes123
+  persistence:
+    size: 10Gi
+  adminUser:
+    username: admin
+    password: admin
+    firstname: Admin
+    lastname: User
+    email: admin@openmetadata.org
+    role: Admin
+  openmetadata:
+    serverUrl: http://catalog-openmetadata-server:8585

@@ -1,0 +1,162 @@
+name: Release - Build and Push Docker Images
+
+# Triggered when a version tag is pushed (e.g., v1.0.0)
+# Builds all OpenLakes custom Docker images and pushes to GHCR
+# Creates GitHub release with generated notes
+
+on:
+  push:
+    tags:
+      - 'v*.*.*'  # Matches v1.0.0, v2.1.3, etc.
+
+env:
+  REGISTRY: ghcr.io
+  IMAGE_PREFIX: openlakes/openlakes-core
+
+jobs:
+  # ═══════════════════════════════════════════════════════════════
+  # Validate Version Tag
+  # ═══════════════════════════════════════════════════════════════
+  validate-version:
+    name: Validate Version Tag
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.version.outputs.version }}
+      version_major: ${{ steps.version.outputs.major }}
+      version_minor: ${{ steps.version.outputs.minor }}
+    steps:
+      - name: Extract version from tag
+        id: version
+        run: |
+          VERSION=${GITHUB_REF#refs/tags/v}
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "major=${VERSION%%.*}" >> $GITHUB_OUTPUT
+          echo "minor=${VERSION%.*}" >> $GITHUB_OUTPUT
+
+      - name: Validate semantic version
+        run: |
+          if [[ ! "${{ steps.version.outputs.version }}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "❌ Error: Version must follow semantic versioning (X.Y.Z)"
+            echo "   Got: ${{ steps.version.outputs.version }}"
+            exit 1
+          fi
+          echo "✅ Valid version: ${{ steps.version.outputs.version }}"
+
+  # ═══════════════════════════════════════════════════════════════
+  # Build Spark OpenMetadata Image
+  # ═══════════════════════════════════════════════════════════════
+  build-spark-openmetadata:
+    name: Build spark-openmetadata
+    needs: validate-version
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ${{ env.REGISTRY }}
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Extract Docker metadata
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.REGISTRY }}/${{ env.IMAGE_PREFIX }}/spark-openmetadata
+          tags: |
+            type=semver,pattern={{version}}
+            type=semver,pattern={{major}}.{{minor}}
+            type=semver,pattern={{major}}
+            type=raw,value=latest,enable={{is_default_branch}}
+          labels: |
+            org.opencontainers.image.title=OpenLakes Spark OpenMetadata
+            org.opencontainers.image.description=Apache Spark 4.1 with OpenMetadata lineage agent and S3A support
+            org.opencontainers.image.vendor=OpenLakes
+
+      - name: Build and push Docker image
+        uses: docker/build-push-action@v5
+        with:
+          context: ./docker/spark-openmetadata
+          file: ./docker/spark-openmetadata/Dockerfile
+          push: true
+          tags: ${{ steps.meta.outputs.tags }}
+          labels: ${{ steps.meta.outputs.labels }}
+          build-args: |
+            VERSION=${{ needs.validate-version.outputs.version }}
+            BUILD_DATE=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.created'] }}
+            VCS_REF=${{ fromJSON(steps.meta.outputs.json).labels['org.opencontainers.image.revision'] }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image digest
+        run: echo ${{ steps.meta.outputs.digest }}
+
+  # ═══════════════════════════════════════════════════════════════
+  # Create GitHub Release
+  # ═══════════════════════════════════════════════════════════════
+  create-release:
+    name: Create GitHub Release
+    needs: [validate-version, build-spark-openmetadata]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Full history for changelog
+
+      - name: Create Release
+        uses: softprops/action-gh-release@v1
+        with:
+          tag_name: v${{ needs.validate-version.outputs.version }}
+          name: Release ${{ needs.validate-version.outputs.version }}
+          generate_release_notes: true
+          body: |
+            ## 🚀 OpenLakes Release ${{ needs.validate-version.outputs.version }}
+
+            ### Docker Images Published
+
+            All images are available on GitHub Container Registry:
+
+            **Spark OpenMetadata** (Apache Spark with OpenMetadata lineage agent):
+            ```bash
+            docker pull ghcr.io/${{ env.IMAGE_PREFIX }}/spark-openmetadata:${{ needs.validate-version.outputs.version }}
+            ```
+
+            ### Tagged Images
+
+            Each image is tagged with:
+            - `${{ needs.validate-version.outputs.version }}` - Full semantic version (immutable)
+            - `${{ needs.validate-version.outputs.version_minor }}` - Minor version family (updated)
+            - `${{ needs.validate-version.outputs.version_major }}` - Major version family (updated)
+            - `latest` - Latest stable release (updated)
+
+            ### Deployment
+
+            Deploy this version to your cluster:
+            ```bash
+            git clone https://github.com/${{ github.repository }}.git
+            cd openlakes-core
+            git checkout v${{ needs.validate-version.outputs.version }}
+            ./deploy-openlakes.sh --env production
+            ```
+
+            Or use a specific layer:
+            ```bash
+            helm upgrade --install 02-compute ./layers/02-compute \
+              --namespace openlakes \
+              -f ./layers/02-compute/values.yaml
+            ```
+
+            ### What's Changed
+
+            See full changelog below.

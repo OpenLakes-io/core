@@ -1,0 +1,200 @@
+global:
+  networking:
+    type: ClusterIP  # Service type (ClusterIP + Ingress for external access via Traefik)
+    ingressClass: traefik
+    domain: openlakes.dev
+    enableIngressRoutes: true  # Create Traefik IngressRoutes for hostname routing
+  storageClass: longhorn
+  namespace: openlakes
+  # Optional tenant identifier for multi-tenant deployments
+  tenant: ""
+  # Service references (should match layer 01-infrastructure or be overridden)
+  services:
+    postgresql:
+      host: infrastructure-postgres
+      port: 5432
+    minio:
+      host: infrastructure-minio
+      port: 9000
+      endpoint: http://infrastructure-minio:9000
+    opensearch:
+      host: infrastructure-opensearch
+      port: 9200
+
+openmetadata:
+  # OpenMetadata is deployed as part of this layer chart
+  # No separate Helm chart installation required
+  enabled: true
+  fullnameOverride: catalog-openmetadata
+
+  service:
+    type: ClusterIP  # Changed from NodePort - access via metadata.openlakes.dev
+  # Ingress routing: metadata.openlakes.dev → OpenMetadata UI
+
+  # Image Configuration
+  image:
+    repository: docker.getcollate.io/openmetadata/server
+    tag: "1.10.7"
+    pullPolicy: IfNotPresent
+
+  resources:
+    requests:
+      cpu: "1"
+      memory: 2Gi
+    limits:
+      cpu: "2"
+      memory: 4Gi
+
+  # Database Configuration (using existing OpenLakes PostgreSQL)
+  database:
+    host: infrastructure-postgres
+    port: 5432
+    databaseName: openmetadata
+    username: openlakes
+    password: openlakes123
+    driverClass: org.postgresql.Driver
+    dbScheme: postgresql
+    dbParams: ""
+
+  # OpenSearch/Elasticsearch Configuration (using OpenLakes OpenSearch)
+  elasticsearch:
+    enabled: true
+    host: infrastructure-opensearch
+    port: 9200
+    scheme: http
+    searchType: opensearch
+    trustStore:
+      enabled: false
+
+  # Pipeline Service Client Configuration
+  pipelineServiceClient:
+    enabled: true
+    className: org.openmetadata.service.clients.pipeline.airflow.AirflowRESTClient
+    apiEndpoint: http://catalog-openmetadata-ingestion:8080
+    metadataApiEndpoint: http://catalog-openmetadata-server:8585/api
+    ingestionIpInfoEnabled: false
+    hostIp: ""
+    # Auth configuration for Airflow (uses basic auth)
+    parameters:
+      username: admin
+      password: admin
+      timeout: 10
+
+  # Authentication Configuration
+  authentication:
+    provider: basic
+    publicKeys:
+      - "http://catalog-openmetadata-server:8585/api/v1/system/config/jwks"
+    enableSelfSignup: true
+    jwtPrincipalClaims:
+      - email
+      - preferred_username
+      - sub
+
+  # Authorizer Configuration
+  authorizer:
+    className: org.openmetadata.service.security.DefaultAuthorizer
+    containerRequestFilter: org.openmetadata.service.security.JwtFilter
+    initialAdmins:
+      - admin
+    principalDomain: open-metadata.org
+
+  # Secrets Manager Configuration
+  secretsManager:
+    provider: db
+    prefix: ""
+    tags: []
+    additionalParameters: {}
+
+  # Web Configuration
+  web:
+    uriPath: /api
+    hsts:
+      enabled: true
+      maxAge: "365 days"
+      includeSubDomains: "true"
+      preload: "true"
+
+  # Logging
+  logLevel: INFO
+
+  # Resource Limits
+#    limits:
+#      memory: 2Gi
+
+  # Probes Configuration
+  probeProfile: fast
+  livenessProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 20
+    failureThreshold: 30
+
+  readinessProbe:
+    initialDelaySeconds: 60
+    periodSeconds: 20
+    failureThreshold: 30
+
+  startupProbe:
+    periodSeconds: 15
+    failureThreshold: 40
+    successThreshold: 1
+
+  # Automated Service Registration
+  automation:
+    # REMOVED IN CORE: Automation moved to OpenLakes Pier
+    #
+    # OpenLakes Core provides manual setup via OpenMetadata UI.
+    # See: examples/05-openmetadata-manual-setup/
+    #
+    # For automated service registration and configuration, use:
+    # https://github.com/openlakes/pier
+    enabled: false
+
+# NOTE: Service connector and registration configurations have been
+# removed from OpenLakes Core. These were used for automated service
+# registration, which is now handled by OpenLakes Pier.
+#
+# For manual service registration via OpenMetadata UI, see:
+# examples/05-openmetadata-manual-setup/
+#
+# For automated service registration, use:
+# https://github.com/openlakes/pier
+# OpenMetadata Ingestion (Airflow for metadata workflows)
+ingestion:
+  enabled: true
+  fullnameOverride: catalog-ingestion
+  image:
+    repository: ghcr.io/openlakes/core/openmetadata-ingestion-runtime
+    tag: "1.0.0"
+    pullPolicy: Always
+  logging:
+    bucket: airflow-catalog-logs
+  webserver:
+    serviceType: ClusterIP  # Changed from NodePort - access via ingestion.openlakes.dev
+  # Ingress routing: ingestion.openlakes.dev → OpenMetadata Ingestion UI
+    replicas: 1
+#      limits:
+  scheduler:
+    replicas: 1
+#      limits:
+  database:
+    host: infrastructure-postgres
+    port: 5432
+    name: openmetadata_airflow
+    user: openlakes
+    password: openlakes123
+  persistence:
+    size: 10Gi
+  adminUser:
+    username: admin
+    password: admin
+    firstname: Admin
+    lastname: User
+    email: admin@openmetadata.org
+    role: Admin
+  openmetadata:
+    serverUrl: http://catalog-openmetadata-server:8585
+  # MinIO Configuration for Remote Logging
+  minio:
+    accessKey: admin
+    secretKey: admin123

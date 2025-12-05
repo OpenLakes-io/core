@@ -1,0 +1,28 @@
+---
+# ═══════════════════════════════════════════════════════════════
+# OpenLakes Grafana Dashboards
+# ═══════════════════════════════════════════════════════════════
+# Custom dashboards for OpenLakes monitoring
+#
+# Dashboards:
+#   1. OpenLakes Overview - Cluster health and resource usage
+#   2. Storage Performance - MinIO, Alluxio, PostgreSQL
+#   3. Compute Performance - Spark, Trino
+#   4. Kafka Streaming - Brokers, topics, consumers
+#   5. GPU Utilization - NVIDIA GPU metrics (if present)
+#
+# Dashboard JSON files are loaded from the dashboards/ directory
+# using .Files.Glob and .AsConfig to prevent Helm template processing
+# of Prometheus query variables
+
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openlakes-grafana-dashboards
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    grafana_dashboard: "1"
+    app: grafana
+    layer: monitoring
+data:
+{{ (.Files.Glob "dashboards/*.json").AsConfig | nindent 2 }}

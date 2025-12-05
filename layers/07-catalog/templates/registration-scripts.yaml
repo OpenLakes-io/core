@@ -1,0 +1,200 @@
+{{- if .Values.openmetadata.enabled }}
+{{- if .Values.openmetadata.automation.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: openmetadata-registration-scripts
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata
+    component: registration
+data:
+  register-services.sh: |
+    #!/bin/sh
+    set -e
+
+    OM_HOST="${OPENMETADATA_HOST:-openmetadata}"
+    OM_PORT="${OPENMETADATA_PORT:-8585}"
+    BASE_URL="http://${OM_HOST}:${OM_PORT}/api/v1"
+
+    echo "🔐 Retrieving bot token..."
+    BOT_TOKEN=$(cat /var/run/secrets/bot-token/token)
+
+    if [ -z "$BOT_TOKEN" ]; then
+      echo "❌ Bot token not found!"
+      exit 1
+    fi
+
+    echo "✅ Bot token retrieved (first 20 chars): ${BOT_TOKEN:0:20}..."
+
+    # Function to register a service
+    register_service() {
+      SERVICE_NAME=$1
+      SERVICE_TYPE=$2
+      SERVICE_ENDPOINT=$3
+      SERVICE_JSON=$4
+
+      echo ""
+      echo "📝 Registering ${SERVICE_NAME} (${SERVICE_TYPE})..."
+
+      # Check if service exists
+      CHECK_RESPONSE=$(curl -s -o /dev/null -w "%{http_code}" \
+        -H "Authorization: Bearer ${BOT_TOKEN}" \
+        "${BASE_URL}/services/${SERVICE_ENDPOINT}/name/openlakes-${SERVICE_NAME}")
+
+      if [ "$CHECK_RESPONSE" = "200" ]; then
+        echo "  ℹ️  Service already exists, updating..."
+        METHOD="PUT"
+      else
+        echo "  ➕ Creating new service..."
+        METHOD="POST"
+      fi
+
+      # Register/update service
+      RESPONSE=$(curl -s -w "\n%{http_code}" \
+        -X ${METHOD} \
+        -H "Authorization: Bearer ${BOT_TOKEN}" \
+        -H "Content-Type: application/json" \
+        -d "${SERVICE_JSON}" \
+        "${BASE_URL}/services/${SERVICE_ENDPOINT}")
+
+      HTTP_CODE=$(echo "$RESPONSE" | tail -n1)
+      BODY=$(echo "$RESPONSE" | sed '$d')
+
+      if [ "$HTTP_CODE" = "200" ] || [ "$HTTP_CODE" = "201" ]; then
+        echo "  ✅ ${SERVICE_NAME} registered successfully"
+        return 0
+      else
+        echo "  ❌ Failed to register ${SERVICE_NAME} (HTTP ${HTTP_CODE})"
+        echo "  Response: ${BODY}"
+        return 1
+      fi
+    }
+
+    echo ""
+    echo "🚀 Starting service registration..."
+    echo "=================================="
+
+    # PostgreSQL
+    {{- if .Values.connectors.postgresql.enabled }}
+    register_service "postgres" "Postgres" "databaseServices" '{
+      "name": "openlakes-postgres",
+      "displayName": "OpenLakes PostgreSQL",
+      "description": "OpenLakes PostgreSQL Database",
+      "serviceType": "Postgres",
+      "connection": {
+        "config": {
+          "type": "Postgres",
+          "scheme": "postgresql+psycopg2",
+          "username": "{{ .Values.connectors.postgresql.config.username }}",
+          "authType": {
+            "password": "'"${POSTGRES_PASSWORD}"'"
+          },
+          "hostPort": "{{ .Values.connectors.postgresql.config.host }}:{{ .Values.connectors.postgresql.config.port }}",
+          "database": "{{ .Values.connectors.postgresql.config.database }}"
+        }
+      }
+    }'
+    {{- end }}
+
+    # Trino
+    {{- if .Values.connectors.trino.enabled }}
+    register_service "trino" "Trino" "databaseServices" '{
+      "name": "openlakes-trino",
+      "displayName": "OpenLakes Trino",
+      "description": "OpenLakes Trino Query Engine",
+      "serviceType": "Trino",
+      "connection": {
+        "config": {
+          "type": "Trino",
+          "username": "{{ .Values.connectors.trino.config.username }}",
+          "hostPort": "{{ .Values.connectors.trino.config.host }}:{{ .Values.connectors.trino.config.port }}",
+          "catalog": "{{ .Values.connectors.trino.config.catalog }}"
+        }
+      }
+    }'
+    {{- end }}
+
+    # Kafka
+    {{- if .Values.connectors.kafka.enabled }}
+    register_service "kafka" "Kafka" "messagingServices" '{
+      "name": "openlakes-kafka",
+      "displayName": "OpenLakes Kafka",
+      "description": "OpenLakes Kafka Event Streaming",
+      "serviceType": "Kafka",
+      "connection": {
+        "config": {
+          "type": "Kafka",
+          "bootstrapServers": "{{ .Values.connectors.kafka.config.bootstrapServers }}"
+        }
+      }
+    }'
+    {{- end }}
+
+    # Airflow
+    {{- if .Values.connectors.airflow.enabled }}
+    register_service "airflow" "Airflow" "pipelineServices" '{
+      "name": "openlakes-airflow",
+      "displayName": "OpenLakes Airflow",
+      "description": "OpenLakes Airflow Orchestration",
+      "serviceType": "Airflow",
+      "connection": {
+        "config": {
+          "type": "Airflow",
+          "hostPort": "{{ .Values.connectors.airflow.config.hostPort }}",
+          "connection": {
+            "type": "Backend"
+          }
+        }
+      }
+    }'
+    {{- end }}
+
+    # Superset
+    {{- if .Values.connectors.superset.enabled }}
+    register_service "superset" "Superset" "dashboardServices" '{
+      "name": "openlakes-superset",
+      "displayName": "OpenLakes Superset",
+      "description": "OpenLakes Superset Dashboards",
+      "serviceType": "Superset",
+      "connection": {
+        "config": {
+          "type": "Superset",
+          "hostPort": "{{ .Values.connectors.superset.config.hostPort }}",
+          "connection": {
+            "provider": "db",
+            "username": "{{ .Values.connectors.superset.config.username }}",
+            "password": "'"${SUPERSET_PASSWORD}"'"
+          }
+        }
+      }
+    }'
+    {{- end }}
+
+    # MinIO (S3)
+    {{- if .Values.connectors.minio.enabled }}
+    register_service "minio" "S3" "storageServices" '{
+      "name": "openlakes-minio",
+      "displayName": "OpenLakes MinIO",
+      "description": "OpenLakes MinIO Object Storage",
+      "serviceType": "S3",
+      "connection": {
+        "config": {
+          "type": "S3",
+          "awsConfig": {
+            "awsAccessKeyId": "{{ .Values.connectors.minio.config.awsAccessKeyId }}",
+            "awsSecretAccessKey": "'"${MINIO_SECRET_KEY}"'",
+            "awsRegion": "{{ .Values.connectors.minio.config.awsRegion }}",
+            "endPointURL": "{{ .Values.connectors.minio.config.endPointURL }}"
+          }
+        }
+      }
+    }'
+    {{- end }}
+
+    echo ""
+    echo "✨ Service registration completed!"
+    echo "=================================="
+{{- end }}
+{{- end }}

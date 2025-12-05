@@ -1,0 +1,9 @@
+dependencies:
+- name: traefik
+  repository: https://traefik.github.io/charts
+  version: 33.2.1
+- name: alluxio
+  repository: file://./charts/alluxio
+  version: 0.6.54
+digest: sha256:01187a9697170bf5af3d13ebb1e47f50f5c9b1ff225b256ba2c72119cca15e9d
+generated: "2025-11-20T05:20:35.04568-06:00"

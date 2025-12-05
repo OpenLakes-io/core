@@ -1,0 +1,205 @@
+{{- if .Values.trino.enabled }}
+{{- $nessieUri := .Values.trino.catalog.nessie.uri | default (printf "http://%s:%v/api/v2" .Values.global.services.nessie.host .Values.global.services.nessie.port) }}
+{{- $minioEndpoint := .Values.trino.catalog.s3.endpoint | default .Values.global.services.minio.endpoint }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.trino.fullnameOverride }}-config
+  namespace: {{ .Values.global.namespace }}
+  {{- with .Values.global.tenant }}
+  labels:
+    openlakes.io/tenant: {{ . }}
+  {{- end }}
+data:
+  config.properties: |
+    coordinator=true
+    node-scheduler.include-coordinator=true
+    http-server.http.port=8080
+    discovery.uri=http://localhost:8080
+    query.max-memory=2GB
+    query.max-memory-per-node=1GB
+  node.properties: |
+    node.environment=production
+    node.data-dir=/data/trino
+  jvm.config: |
+    -server
+    -Xmx2G
+    -XX:+UseG1GC
+    -XX:G1HeapRegionSize=32M
+    -XX:+ExplicitGCInvokesConcurrent
+    -XX:+HeapDumpOnOutOfMemoryError
+    -XX:+ExitOnOutOfMemoryError
+    -Dcom.sun.management.jmxremote
+    -Dcom.sun.management.jmxremote.port=9080
+    -Dcom.sun.management.jmxremote.rmi.port=9080
+    -Dcom.sun.management.jmxremote.authenticate=false
+    -Dcom.sun.management.jmxremote.ssl=false
+    -Djava.rmi.server.hostname=localhost
+  log.properties: |
+    io.trino=INFO
+  lakehouse.properties: |
+    connector.name=iceberg
+    iceberg.catalog.type=nessie
+    iceberg.nessie-catalog.uri={{ $nessieUri }}
+    iceberg.nessie-catalog.ref=main
+    iceberg.nessie-catalog.default-warehouse-dir=s3://openlakes/warehouse/
+    fs.native-s3.enabled=true
+    # Trino reads from MinIO (S3) where Spark writes data through Alluxio CACHE_THROUGH mode
+    # When Alluxio is enabled, Spark caches data in NVMe/memory and writes through to MinIO
+    # Trino queries benefit from data already optimized/compacted by cached Spark operations
+    s3.endpoint={{ $minioEndpoint }}
+    s3.region=us-east-1
+    s3.path-style-access=true
+    s3.aws-access-key={{ .Values.trino.catalog.s3.accessKey }}
+    s3.aws-secret-key={{ .Values.trino.catalog.s3.secretKey }}
+  jmx-exporter-config.yaml: |
+    ---
+    # JMX Exporter configuration for Trino
+    # Exposes JMX MBeans as Prometheus metrics
+    # Reference: https://github.com/prometheus/jmx_exporter
+    lowercaseOutputName: true
+    lowercaseOutputLabelNames: true
+    whitelistObjectNames:
+      # Trino-specific MBeans
+      - "trino.execution:name=QueryManager"
+      - "trino.execution:name=TaskManager"
+      - "trino.memory:*"
+      - "trino.execution:name=SqlTaskManager"
+      - "java.lang:type=Memory"
+      - "java.lang:type=GarbageCollector,*"
+      - "java.lang:type=Threading"
+      - "java.lang:type=Runtime"
+      - "java.lang:type=OperatingSystem"
+    rules:
+      # Query metrics
+      - pattern: 'trino.execution<name=QueryManager><>(\w+)'
+        name: trino_query_manager_$1
+        type: GAUGE
+      # Task metrics
+      - pattern: 'trino.execution<name=TaskManager><>(\w+)'
+        name: trino_task_manager_$1
+        type: GAUGE
+      # Memory metrics
+      - pattern: 'trino.memory<type=(.+), name=(.+)><>(\w+)'
+        name: trino_memory_$3
+        labels:
+          type: "$1"
+          pool: "$2"
+        type: GAUGE
+      # JVM Memory
+      - pattern: 'java.lang<type=Memory><HeapMemoryUsage>(\w+)'
+        name: jvm_heap_memory_$1
+        type: GAUGE
+      # JVM GC
+      - pattern: 'java.lang<type=GarbageCollector, name=(.+)><>(\w+)'
+        name: jvm_gc_$2
+        labels:
+          gc: "$1"
+        type: GAUGE
+
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: {{ .Values.trino.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: trino
+    component: coordinator
+    {{- with .Values.global.tenant }}
+    openlakes.io/tenant: {{ . }}
+    {{- end }}
+spec:
+  replicas: 1
+  selector:
+    matchLabels:
+      app: trino
+  template:
+    metadata:
+      labels:
+        app: trino
+        component: coordinator
+        {{- with .Values.global.tenant }}
+        openlakes.io/tenant: {{ . }}
+        {{- end }}
+    spec:
+      containers:
+      - name: trino
+        image: {{ .Values.trino.image.repository }}:{{ .Values.trino.image.tag }}
+        ports:
+        - containerPort: 8080
+          name: http
+        volumeMounts:
+        - name: config
+          mountPath: /etc/trino
+        - name: data
+          mountPath: /data/trino
+        - name: catalog
+          mountPath: /etc/trino/catalog
+        {{- if .Values.trino.resources }}
+        resources:
+          {{- toYaml .Values.trino.resources | nindent 10 }}
+        {{- end }}
+        livenessProbe:
+          httpGet:
+            path: /v1/info
+            port: 8080
+          initialDelaySeconds: 60
+          periodSeconds: 15
+          timeoutSeconds: 5
+          failureThreshold: 6
+        readinessProbe:
+          httpGet:
+            path: /v1/info
+            port: 8080
+          initialDelaySeconds: 40
+          periodSeconds: 10
+          timeoutSeconds: 5
+          failureThreshold: 6
+      # JMX Exporter sidecar for Prometheus metrics (DISABLED - image not available)
+      # TODO: Re-enable with correct image when available
+      volumes:
+      - name: config
+        configMap:
+          name: {{ .Values.trino.fullnameOverride }}-config
+          items:
+          - key: config.properties
+            path: config.properties
+          - key: node.properties
+            path: node.properties
+          - key: jvm.config
+            path: jvm.config
+          - key: log.properties
+            path: log.properties
+      - name: catalog
+        configMap:
+          name: {{ .Values.trino.fullnameOverride }}-config
+          items:
+          - key: lakehouse.properties
+            path: lakehouse.properties
+      # jmx-exporter-config volume removed (JMX exporter disabled)
+      - name: data
+        emptyDir: {}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.trino.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: trino
+spec:
+  type: {{ .Values.global.networking.type | default "ClusterIP" }}
+  selector:
+    app: trino
+  ports:
+  - name: http
+    port: 8080
+    targetPort: 8080
+    {{- if eq (.Values.global.networking.type | default "ClusterIP") "NodePort" }}
+    nodePort: {{ .Values.trino.coordinator.nodePort }}
+    {{- end }}
+  # metrics port removed (JMX exporter disabled)
+{{- end }}

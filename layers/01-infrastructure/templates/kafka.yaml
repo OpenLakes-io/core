@@ -1,0 +1,203 @@
+{{- if .Values.kafka.enabled }}
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: {{ .Values.kafka.fullnameOverride }}-config
+  namespace: {{ .Values.global.namespace }}
+  {{- with .Values.global.tenant }}
+  labels:
+    openlakes.io/tenant: {{ . }}
+  {{- end }}
+data:
+  server.properties: |
+    # KRaft mode configuration
+    process.roles=broker,controller
+    node.id=1
+    controller.quorum.voters=1@{{ .Values.kafka.fullnameOverride }}-0.{{ .Values.kafka.fullnameOverride }}.{{ .Values.global.namespace }}.svc.cluster.local:9093
+    listeners=PLAINTEXT://:9092,CONTROLLER://:9093
+    advertised.listeners=PLAINTEXT://{{ .Values.kafka.fullnameOverride }}-0.{{ .Values.kafka.fullnameOverride }}.{{ .Values.global.namespace }}.svc.cluster.local:9092
+    controller.listener.names=CONTROLLER
+    listener.security.protocol.map=CONTROLLER:PLAINTEXT,PLAINTEXT:PLAINTEXT
+    inter.broker.listener.name=PLAINTEXT
+
+    # Storage
+    log.dirs=/var/lib/kafka/data
+
+    # Basic settings
+    num.network.threads=3
+    num.io.threads=8
+    socket.send.buffer.bytes=102400
+    socket.receive.buffer.bytes=102400
+    socket.request.max.bytes=104857600
+
+    # Log settings
+    log.retention.hours=168
+    log.segment.bytes=1073741824
+    log.retention.check.interval.ms=300000
+
+    # Topic defaults
+    num.partitions=3
+    default.replication.factor=1
+    offsets.topic.replication.factor=1
+    transaction.state.log.replication.factor=1
+    transaction.state.log.min.isr=1
+
+---
+apiVersion: apps/v1
+kind: StatefulSet
+metadata:
+  name: {{ .Values.kafka.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: kafka
+    component: messaging
+    {{- with .Values.global.tenant }}
+    openlakes.io/tenant: {{ . }}
+    {{- end }}
+spec:
+  serviceName: {{ .Values.kafka.fullnameOverride }}
+  replicas: 1
+  selector:
+    matchLabels:
+      app: kafka
+  template:
+    metadata:
+      labels:
+        app: kafka
+        component: messaging
+        {{- with .Values.global.tenant }}
+        openlakes.io/tenant: {{ . }}
+        {{- end }}
+    spec:
+      {{- if .Values.kafka.podSecurityContext }}
+      securityContext:
+        {{- toYaml .Values.kafka.podSecurityContext | nindent 8 }}
+      {{- end }}
+      initContainers:
+      - name: kafka-data-prepare
+        image: {{ .Values.kafka.image.repository }}:{{ .Values.kafka.image.tag }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          set -euo pipefail
+
+          DATA_DIR="/var/lib/kafka/data"
+          CONFIG_FILE="/config/server.properties"
+
+          # Clean inherited system directories
+          rm -rf "${DATA_DIR}/lost+found" || true
+
+          if [ ! -f "${CONFIG_FILE}" ]; then
+            echo "Kafka config missing at ${CONFIG_FILE}"
+            exit 1
+          fi
+
+          # Remove obviously foreign directories (e.g., pgdata) that break Kafka startup
+          for path in "${DATA_DIR}"/*; do
+            [ -e "$path" ] || continue
+            base="$(basename "$path")"
+            case "$base" in
+              meta.properties|*.checkpoint|*.log|*.index|*.timeindex|*.txnindex)
+                continue
+                ;;
+            esac
+            if [ -d "$path" ]; then
+              if ! echo "$base" | grep -Eq '^[A-Za-z0-9._-]+-[0-9]+$'; then
+                echo "Removing non-Kafka directory: $path"
+                rm -rf "$path"
+              fi
+            fi
+          done
+
+          if [ -f "${DATA_DIR}/meta.properties" ]; then
+            echo "Existing Kafka data detected; skipping storage format"
+          else
+            CLUSTER_ID="${KAFKA_CLUSTER_ID:-$(/opt/kafka/bin/kafka-storage.sh random-uuid)}"
+            echo "Formatting Kafka storage with cluster.id=${CLUSTER_ID}"
+            /opt/kafka/bin/kafka-storage.sh format -t "${CLUSTER_ID}" -c "${CONFIG_FILE}"
+          fi
+
+          chown -R 1000:1000 "${DATA_DIR}"
+        env:
+        - name: KAFKA_CLUSTER_ID
+          value: {{ .Values.kafka.clusterId | default "" | quote }}
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/kafka/data
+        - name: config
+          mountPath: /config
+        securityContext:
+          runAsUser: 0  # Root required for cleanup/format
+      containers:
+      - name: kafka
+        image: {{ .Values.kafka.image.repository }}:{{ .Values.kafka.image.tag }}
+        command:
+        - /bin/bash
+        - -c
+        - |
+          cp /config/server.properties /tmp/server.properties
+          /opt/kafka/bin/kafka-server-start.sh /tmp/server.properties
+        ports:
+        - containerPort: 9092
+          name: kafka
+        - containerPort: 9093
+          name: controller
+        volumeMounts:
+        - name: data
+          mountPath: /var/lib/kafka/data
+        - name: config
+          mountPath: /config
+        env:
+        - name: KAFKA_CLUSTER_ID
+          value: {{ .Values.kafka.clusterId | default "" | quote }}
+        securityContext:
+          runAsUser: 1000
+          runAsNonRoot: true
+        resources:
+          {{- toYaml .Values.kafka.resources | nindent 10 }}
+        livenessProbe:
+          tcpSocket:
+            port: 9092
+          initialDelaySeconds: 15
+          periodSeconds: 10
+        readinessProbe:
+          tcpSocket:
+            port: 9092
+          initialDelaySeconds: 15
+          periodSeconds: 10
+      volumes:
+      - name: config
+        configMap:
+          name: {{ .Values.kafka.fullnameOverride }}-config
+  volumeClaimTemplates:
+  - metadata:
+      name: data
+    spec:
+      accessModes: ["ReadWriteOnce"]
+      storageClassName: {{ .Values.global.storageClass }}
+      resources:
+        requests:
+          storage: {{ .Values.kafka.persistence.size }}
+
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.kafka.fullnameOverride }}
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: kafka
+spec:
+  type: {{ .Values.kafka.service.type | default "ClusterIP" }}
+  selector:
+    app: kafka
+  ports:
+  - name: kafka
+    port: 9092
+    targetPort: 9092
+    {{- if eq (.Values.kafka.service.type | default "ClusterIP") "NodePort" }}
+    nodePort: {{ .Values.kafka.service.nodePort }}
+    {{- end }}
+{{- end }}

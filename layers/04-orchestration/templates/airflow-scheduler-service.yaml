@@ -1,0 +1,26 @@
+{{- if .Values.airflow.enabled }}
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: {{ .Values.airflow.fullnameOverride }}-scheduler
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: airflow
+    component: scheduler
+    layer: orchestration
+spec:
+  type: ClusterIP
+  ports:
+    - port: 8793
+      targetPort: 8793
+      protocol: TCP
+      name: logs
+    - port: 8794
+      targetPort: 8794
+      protocol: TCP
+      name: worker-logs
+  selector:
+    app: airflow
+    component: scheduler
+{{- end }}

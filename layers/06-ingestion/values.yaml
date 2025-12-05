@@ -1,0 +1,97 @@
+global:
+  networking:
+    type: ClusterIP  # Service type (ClusterIP + Ingress for external access via Traefik)
+    ingressClass: traefik
+    domain: openlakes.dev
+    enableIngressRoutes: true  # Create Traefik IngressRoutes for hostname routing
+  storageClass: longhorn
+  namespace: openlakes
+  # Optional tenant identifier for multi-tenant deployments
+  tenant: ""
+  # Service references (should match layer 01-infrastructure or be overridden)
+  services:
+    postgresql:
+      host: infrastructure-postgres
+      port: 5432
+    minio:
+      host: infrastructure-minio
+      port: 9000
+      endpoint: http://infrastructure-minio:9000
+    kafka:
+      host: infrastructure-kafka
+      port: 9092
+      bootstrapServers: infrastructure-kafka:9092
+  # Legacy minio config (for backwards compatibility)
+  minio:
+    endpoint: http://infrastructure-minio:9000
+    rootUser: admin
+    rootPassword: admin123
+
+meltano:
+  enabled: true
+  fullnameOverride: ingestion-meltano
+  image:
+    repository: ghcr.io/openlakes/core/meltano-runtime
+    tag: "1.0.0"
+    pullPolicy: Always
+  versionOverride: "4.0.6"
+  persistence:
+    storageClass: ""
+    size: 10Gi
+  s3:
+    bucket: openlakes
+    prefix: meltano/
+  resources:
+    requests:
+      cpu: 200m
+      memory: 512Mi
+    limits:
+      cpu: "2"
+      memory: 2Gi
+  env:
+    extra: []
+  bootstrap:
+    enabled: true
+    meltanoYml: |
+      version: 1
+      default_environment: dev
+      project_id: openlakes
+      environments:
+        - name: dev
+      plugins:
+        extractors:
+          - name: tap-postgres
+            pip_url: pipelinewise-tap-postgres==1.8.4
+            config:
+              host: ${MELTANO_SAMPLE_PG_HOST:-infrastructure-postgres}
+              port: ${MELTANO_SAMPLE_PG_PORT:-5432}
+              database: ${MELTANO_SAMPLE_PG_DB:-demo}
+              user: ${MELTANO_SAMPLE_PG_USER:-openlakes}
+              password: ${MELTANO_SAMPLE_PG_PASSWORD:-openlakes123}
+        loaders:
+          - name: target-s3
+            variant: crowemi
+            config:
+              aws_access_key_id: ${MELTANO_S3_ACCESS_KEY}
+              aws_secret_access_key: ${MELTANO_S3_SECRET_KEY}
+              aws_endpoint_url: ${MELTANO_S3_ENDPOINT}
+              bucket: ${MELTANO_S3_BUCKET}
+              s3_key_prefix: ${MELTANO_S3_PREFIX}
+              aws_region: us-east-1
+              format: jsonl
+  probeProfile: slow
+
+debezium:
+  enabled: true
+  fullnameOverride: ingestion-debezium
+  image:
+    repository: debezium/connect
+    tag: "3.0.0.Final"
+  replicas: 1
+  groupId: "debezium-cluster"
+  kafka:
+    host: infrastructure-kafka
+    port: 9092
+  service:
+    type: ClusterIP  # Changed from NodePort - access via debezium.openlakes.dev
+  # Ingress routing: debezium.openlakes.dev → Debezium REST API

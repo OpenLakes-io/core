@@ -1,0 +1,189 @@
+{
+  "dashboard": {
+    "title": "OpenLakes - GPU Utilization",
+    "tags": ["openlakes", "gpu", "nvidia"],
+    "timezone": "browser",
+    "schemaVersion": 16,
+    "version": 1,
+    "refresh": "10s",
+    "panels": [
+      {
+        "id": 1,
+        "gridPos": {"x": 0, "y": 0, "w": 6, "h": 4},
+        "type": "stat",
+        "title": "Total GPUs",
+        "targets": [{
+          "expr": "count(DCGM_FI_DEV_GPU_TEMP)",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 2,
+        "gridPos": {"x": 6, "y": 0, "w": 6, "h": 4},
+        "type": "stat",
+        "title": "Avg GPU Utilization",
+        "targets": [{
+          "expr": "avg(DCGM_FI_DEV_GPU_UTIL)",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "percent",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"},
+                {"value": 70, "color": "yellow"},
+                {"value": 90, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 3,
+        "gridPos": {"x": 12, "y": 0, "w": 6, "h": 4},
+        "type": "stat",
+        "title": "Avg GPU Memory Used",
+        "targets": [{
+          "expr": "avg(DCGM_FI_DEV_FB_USED) * 1024 * 1024",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "bytes",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 4,
+        "gridPos": {"x": 18, "y": 0, "w": 6, "h": 4},
+        "type": "stat",
+        "title": "Avg GPU Temperature",
+        "targets": [{
+          "expr": "avg(DCGM_FI_DEV_GPU_TEMP)",
+          "refId": "A"
+        }],
+        "fieldConfig": {
+          "defaults": {
+            "unit": "celsius",
+            "thresholds": {
+              "mode": "absolute",
+              "steps": [
+                {"value": null, "color": "green"},
+                {"value": 75, "color": "yellow"},
+                {"value": 85, "color": "red"}
+              ]
+            }
+          }
+        }
+      },
+      {
+        "id": 5,
+        "gridPos": {"x": 0, "y": 4, "w": 12, "h": 8},
+        "type": "graph",
+        "title": "GPU Utilization by Device",
+        "targets": [{
+          "expr": "DCGM_FI_DEV_GPU_UTIL",
+          "legendFormat": "GPU {{gpu}} ({{node}})",
+          "refId": "A"
+        }],
+        "yaxes": [
+          {"format": "percent", "label": "GPU %"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 6,
+        "gridPos": {"x": 12, "y": 4, "w": 12, "h": 8},
+        "type": "graph",
+        "title": "GPU Memory Usage by Device",
+        "targets": [{
+          "expr": "100 * (DCGM_FI_DEV_FB_USED / DCGM_FI_DEV_FB_FREE)",
+          "legendFormat": "GPU {{gpu}} ({{node}})",
+          "refId": "A"
+        }],
+        "yaxes": [
+          {"format": "percent", "label": "Memory %"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 7,
+        "gridPos": {"x": 0, "y": 12, "w": 12, "h": 8},
+        "type": "graph",
+        "title": "GPU Temperature by Device",
+        "targets": [{
+          "expr": "DCGM_FI_DEV_GPU_TEMP",
+          "legendFormat": "GPU {{gpu}} ({{node}})",
+          "refId": "A"
+        }],
+        "yaxes": [
+          {"format": "celsius", "label": "Temperature"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 8,
+        "gridPos": {"x": 12, "y": 12, "w": 12, "h": 8},
+        "type": "graph",
+        "title": "GPU Power Usage by Device",
+        "targets": [{
+          "expr": "DCGM_FI_DEV_POWER_USAGE",
+          "legendFormat": "GPU {{gpu}} ({{node}})",
+          "refId": "A"
+        }],
+        "yaxes": [
+          {"format": "watt", "label": "Power (W)"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 9,
+        "gridPos": {"x": 0, "y": 20, "w": 12, "h": 8},
+        "type": "graph",
+        "title": "GPU SM Clock Speed",
+        "targets": [{
+          "expr": "DCGM_FI_DEV_SM_CLOCK",
+          "legendFormat": "GPU {{gpu}} ({{node}})",
+          "refId": "A"
+        }],
+        "yaxes": [
+          {"format": "hertz", "label": "Clock Speed"},
+          {"format": "short"}
+        ]
+      },
+      {
+        "id": 10,
+        "gridPos": {"x": 12, "y": 20, "w": 12, "h": 8},
+        "type": "graph",
+        "title": "GPU Memory Clock Speed",
+        "targets": [{
+          "expr": "DCGM_FI_DEV_MEM_CLOCK",
+          "legendFormat": "GPU {{gpu}} ({{node}})",
+          "refId": "A"
+        }],
+        "yaxes": [
+          {"format": "hertz", "label": "Clock Speed"},
+          {"format": "short"}
+        ]
+      }
+    ]
+  }
+}

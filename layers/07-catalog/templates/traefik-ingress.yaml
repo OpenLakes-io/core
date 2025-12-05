@@ -1,0 +1,109 @@
+{{- if .Values.global.networking.enableIngressRoutes }}
+---
+# ═══════════════════════════════════════════════════════════════
+# OpenMetadata - Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access OpenMetadata UI at: http://metadata.openlakes.local
+{{- if .Values.openmetadata.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: catalog-openmetadata
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata
+    layer: catalog
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`metadata.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: catalog-openmetadata-server
+          port: 8585  # OpenMetadata server port
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# OpenMetadata Ingestion - Ingress Route
+# ═══════════════════════════════════════════════════════════════
+# Access OpenMetadata Ingestion UI at: http://ingestion.openlakes.local
+{{- if .Values.ingestion.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: catalog-ingestion
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata-ingestion
+    layer: catalog
+spec:
+  entryPoints:
+    - web
+  routes:
+    - match: Host(`ingestion.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: catalog-ingestion-webserver
+          port: 8080  # Ingestion Airflow webserver port
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# OpenMetadata - Secure Ingress Route (HTTPS)
+# ═══════════════════════════════════════════════════════════════
+# Access OpenMetadata UI at: https://metadata.openlakes.dev
+{{- if .Values.openmetadata.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: catalog-openmetadata-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata
+    layer: catalog
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`metadata.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: catalog-openmetadata-server
+          port: 8585
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: metadata.{{ .Values.global.networking.domain }}
+{{- end }}
+
+---
+# ═══════════════════════════════════════════════════════════════
+# OpenMetadata Ingestion - Secure Ingress Route (HTTPS)
+# ═══════════════════════════════════════════════════════════════
+# Access OpenMetadata Ingestion UI at: https://ingestion.openlakes.dev
+{{- if .Values.ingestion.enabled }}
+apiVersion: traefik.io/v1alpha1
+kind: IngressRoute
+metadata:
+  name: catalog-ingestion-secure
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: openmetadata-ingestion
+    layer: catalog
+spec:
+  entryPoints:
+    - websecure
+  routes:
+    - match: Host(`ingestion.{{ .Values.global.networking.domain }}`)
+      kind: Rule
+      services:
+        - name: catalog-ingestion-webserver
+          port: 8080
+  tls:
+    certResolver: letsencrypt
+    domains:
+      - main: ingestion.{{ .Values.global.networking.domain }}
+{{- end }}
+{{- end }}

@@ -1,0 +1,6 @@
+apiVersion: v2
+name: openlakes-orchestration
+version: 1.0.0
+description: OpenLakes orchestration layer - workflow management
+type: application
+

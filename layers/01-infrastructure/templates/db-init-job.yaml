@@ -1,0 +1,88 @@
+{{- if .Values.postgresql.enabled }}
+---
+apiVersion: batch/v1
+kind: Job
+metadata:
+  name: {{ .Values.postgresql.fullnameOverride }}-db-init
+  namespace: {{ .Values.global.namespace }}
+  labels:
+    app: postgresql
+    component: db-init
+  # No Helm hooks - runs as regular Job concurrently with infrastructure
+  # initContainer waits for PostgreSQL to be ready before creating databases
+spec:
+  ttlSecondsAfterFinished: 300
+  backoffLimit: 5
+  template:
+    metadata:
+      labels:
+        app: postgresql
+        component: db-init
+    spec:
+      restartPolicy: OnFailure
+      initContainers:
+      - name: wait-for-postgres
+        image: postgres:16
+        command:
+        - sh
+        - -c
+        - |
+          until pg_isready -h {{ .Values.postgresql.fullnameOverride }} -p 5432 -U {{ .Values.postgresql.auth.username }}; do
+            echo "Waiting for PostgreSQL to be ready..."
+            sleep 5
+          done
+          echo "PostgreSQL is ready!"
+      containers:
+      - name: create-databases
+        image: postgres:16
+        env:
+        - name: PGPASSWORD
+          value: "{{ .Values.postgresql.auth.password }}"
+        - name: PGHOST
+          value: "{{ .Values.postgresql.fullnameOverride }}"
+        - name: PGPORT
+          value: "5432"
+        - name: PGUSER
+          value: "{{ .Values.postgresql.auth.username }}"
+        command:
+        - sh
+        - -c
+        - |
+          set -e
+          echo "Initializing PostgreSQL databases..."
+
+          # Step 1: Install pg_stat_statements in template1 so all new databases inherit it
+          echo "Installing pg_stat_statements in template1..."
+          psql -d template1 -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;"
+          echo "  ✓ pg_stat_statements enabled in template1 (all new databases will inherit this)"
+
+          # Function to create database if it doesn't exist
+          create_db_if_not_exists() {
+            DB_NAME=$1
+            if psql -lqt | cut -d \| -f 1 | grep -qw "$DB_NAME"; then
+              echo "  ✓ Database '$DB_NAME' already exists"
+              # For existing databases, ensure extension is installed
+              psql -d "$DB_NAME" -c "CREATE EXTENSION IF NOT EXISTS pg_stat_statements;" 2>/dev/null || true
+              echo "    ✓ Ensured pg_stat_statements is enabled"
+            else
+              # New databases automatically get the extension from template1
+              psql -c "CREATE DATABASE $DB_NAME;"
+              echo "  ✓ Created database '$DB_NAME' (inherited pg_stat_statements from template1)"
+            fi
+          }
+
+          # Create required databases
+          {{- if .Values.postgresql.databases }}
+          {{- range .Values.postgresql.databases }}
+          create_db_if_not_exists "{{ . }}"
+          {{- end }}
+          {{- else }}
+          # Default databases for OpenLakes stack
+          create_db_if_not_exists "airflow"
+          create_db_if_not_exists "openmetadata"
+          create_db_if_not_exists "superset"
+          {{- end }}
+
+          echo "Database initialization completed successfully!"
+          echo "All current and future databases have pg_stat_statements extension enabled."
+{{- end }}

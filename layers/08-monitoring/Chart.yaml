@@ -1,0 +1,45 @@
+apiVersion: v2
+name: openlakes-monitoring
+version: 1.0.0
+description: OpenLakes monitoring layer - Prometheus, Grafana, Loki, and application exporters
+type: application
+
+dependencies:
+  # Prometheus + Grafana + Alertmanager (all-in-one monitoring stack)
+  - name: kube-prometheus-stack
+    version: "68.2.2"
+    repository: "https://prometheus-community.github.io/helm-charts"
+    condition: prometheus.enabled
+
+  # Loki for log aggregation
+  - name: loki
+    version: "6.23.0"
+    repository: "https://grafana.github.io/helm-charts"
+    condition: loki.enabled
+
+  # Promtail for log shipping (DaemonSet)
+  - name: promtail
+    version: "6.16.6"
+    repository: "https://grafana.github.io/helm-charts"
+    condition: promtail.enabled
+
+  # Kafka metrics exporter
+  - name: prometheus-kafka-exporter
+    version: "2.12.0"
+    repository: "https://prometheus-community.github.io/helm-charts"
+    condition: kafkaExporter.enabled
+    alias: kafka-exporter
+
+  # PostgreSQL metrics exporter
+  - name: prometheus-postgres-exporter
+    version: "6.4.0"
+    repository: "https://prometheus-community.github.io/helm-charts"
+    condition: postgresExporter.enabled
+    alias: postgres-exporter
+
+  # StatsD metrics exporter (for Airflow)
+  - name: prometheus-statsd-exporter
+    version: "0.15.0"
+    repository: "https://prometheus-community.github.io/helm-charts"
+    condition: statsdExporter.enabled
+    alias: statsd-exporter
