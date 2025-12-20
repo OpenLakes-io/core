@@ -132,6 +132,51 @@ After deployment, access the following UIs:
 
 **Note**: Replace `localhost` with your cluster's IP if accessing remotely.
 
+## Dashboard Service Routing
+
+The OpenLakes Core dashboard is a simple link hub. It does not run health checks
+or shared authentication. Each component handles its own login.
+
+By default, the dashboard assumes services live at:
+
+```
+{protocol}://{subdomain}.{domain}:{port}
+```
+
+To avoid deployment assumptions, set a runtime service list via
+`dashboard.env.servicesB64` (base64 JSON array). Each entry can provide a full
+`url` or a `host` + `path`:
+
+```json
+[
+  {
+    "name": "Superset",
+    "description": "BI and dashboards",
+    "url": "https://superset.example.com",
+    "icon": "insertChart",
+    "category": "Analytics",
+    "color": "#20A7C9"
+  },
+  {
+    "name": "Airflow",
+    "description": "Workflow orchestration",
+    "host": "airflow.internal.local",
+    "path": "/home",
+    "icon": "widgets",
+    "category": "Orchestration",
+    "color": "#017CEE"
+  }
+]
+```
+
+Encode and set it:
+
+```bash
+export SERVICES_B64=$(cat services.json | base64 | tr -d '\n')
+helm upgrade --install 01-infrastructure layers/01-infrastructure \
+  --set dashboard.env.servicesB64="${SERVICES_B64}"
+```
+
 ## Troubleshooting
 
 ### Script fails with "Cannot connect to Kubernetes cluster"
