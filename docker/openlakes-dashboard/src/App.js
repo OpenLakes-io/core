@@ -73,6 +73,18 @@ const buildServiceUrl = (subdomain, path = '') => {
   return path ? `${baseUrl}${path}` : baseUrl;
 };
 
+const resolveServiceUrl = (service) => {
+  if (service.url) {
+    return service.url;
+  }
+  if (service.host) {
+    const portSegment = config.port ? `:${config.port}` : '';
+    const baseUrl = `${config.protocol}://${service.host}${portSegment}`;
+    return service.path ? `${baseUrl}${service.path}` : baseUrl;
+  }
+  return buildServiceUrl(service.subdomain, service.path || '');
+};
+
 const iconRegistry = {
   storage: Storage,
   speed: Speed,
@@ -256,7 +268,7 @@ const defaultServicesData = [
 const servicesDataFromEnv = decodeServicesFromEnv();
 const services = (servicesDataFromEnv.length ? servicesDataFromEnv : defaultServicesData).map((service) => ({
   ...service,
-  url: buildServiceUrl(service.subdomain, service.path || ''),
+  url: resolveServiceUrl(service),
 }));
 
 const shouldShowCredentials = () => {

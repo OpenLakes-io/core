@@ -160,6 +160,39 @@ const services = [
 
 Then rebuild the image.
 
+### Runtime Service List (No Deployment Assumptions)
+
+You can override the service list at runtime without rebuilding by providing
+`OPENLAKES_SERVICES_B64` (base64-encoded JSON). Each service may define either
+`url` (full URL) or `host` (host without protocol). If neither is provided,
+the dashboard falls back to `subdomain + domain`.
+
+Example:
+
+```bash
+export OPENLAKES_SERVICES_B64=$(echo '[
+  {
+    "name": "Superset",
+    "description": "BI and dashboards",
+    "url": "https://superset.example.com",
+    "icon": "insertChart",
+    "category": "Analytics",
+    "color": "#20A7C9"
+  },
+  {
+    "name": "Airflow",
+    "description": "Workflow orchestration",
+    "host": "airflow.internal.local",
+    "path": "/home",
+    "icon": "widgets",
+    "category": "Orchestration",
+    "color": "#017CEE"
+  }
+]' | base64 | tr -d '\n')
+```
+
+Use with the Helm chart by setting `dashboard.env.servicesB64`.
+
 ## Development
 
 Run locally without Docker:
