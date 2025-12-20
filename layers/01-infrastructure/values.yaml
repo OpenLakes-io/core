@@ -715,6 +715,10 @@ dashboard:
     port: "443"
     showCredentials: "true"
     version: "v1.0.1"
+    # Base64-encoded JSON array of services. Each entry can provide:
+    # - url: full URL (recommended for custom deployments)
+    # - host + path: host without protocol, optional path
+    # - subdomain: fallback to protocol://{subdomain}.{domain}:{port}
     servicesB64: ""
 
   service:
